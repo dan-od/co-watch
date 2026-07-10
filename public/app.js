@@ -73,6 +73,9 @@ function enterRoom(roomId) {
   let pc = null;
   let makingOffer = false;
   let ignoreOffer = false;
+  let screenStream = null; // our outgoing screen share
+  let screenSenders = []; // RTCRtpSenders for the screen tracks
+  let remoteScreenStreamId = null; // announced by the sharer before addTrack
 
   // ---- Signaling socket ----
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -115,6 +118,7 @@ function enterRoom(roomId) {
         if (peerPresent) {
           setStatus('Your friend is here — connecting cameras…', 'ok');
           await createPeerConnection();
+          $('share-screen').disabled = false;
         } else {
           setStatus('Waiting for the other person to join…');
         }
@@ -124,6 +128,7 @@ function enterRoom(roomId) {
         polite = false; // we were here first -> impolite peer
         setStatus('Your friend is here — connecting cameras…', 'ok');
         await createPeerConnection();
+        $('share-screen').disabled = false;
         break;
       case 'peer-left':
         peerPresent = false;
@@ -145,6 +150,16 @@ function enterRoom(roomId) {
           await pc.addIceCandidate(msg.candidate);
         } catch (err) {
           if (!ignoreOffer) console.warn('addIceCandidate failed:', err);
+        }
+        break;
+      case 'screen-share':
+        // Sent by the sharer just before addTrack, so (WS ordering) the stream
+        // id is known here before the renegotiation offer arrives.
+        if (msg.on) {
+          remoteScreenStreamId = msg.streamId;
+        } else {
+          remoteScreenStreamId = null;
+          clearScreen();
         }
         break;
       case 'chat':
@@ -213,10 +228,13 @@ function enterRoom(roomId) {
     };
 
     pc.ontrack = ({ streams }) => {
-      const remote = $('remote-video');
-      if (streams[0] && remote.srcObject !== streams[0]) {
-        remote.srcObject = streams[0];
-        tryPlayRemote();
+      const stream = streams[0];
+      if (!stream) return;
+      if (stream.id === remoteScreenStreamId) {
+        if ($('screen-video').srcObject !== stream) showScreen(stream, false);
+      } else if ($('remote-video').srcObject !== stream) {
+        $('remote-video').srcObject = stream;
+        tryPlay($('remote-video'));
       }
     };
 
@@ -263,25 +281,100 @@ function enterRoom(roomId) {
       pc.close();
       pc = null;
     }
+    stopScreenShare(); // pc-null-safe; ends our share when the peer is gone
+    remoteScreenStreamId = null;
+    clearScreen();
+    $('share-screen').disabled = true;
     $('remote-video').srcObject = null;
     $('tap-to-play').hidden = true;
     makingOffer = false;
     ignoreOffer = false;
   }
 
+  // ---- Screen share ----
+  $('share-screen').addEventListener('click', () => {
+    if (screenStream) stopScreenShare();
+    else startScreenShare();
+  });
+
+  async function startScreenShare() {
+    if (!pc || screenStream) return;
+    let stream;
+    try {
+      // audio:true just adds the browser's "share audio" checkbox to the
+      // picker (PRD flow step 4); declining it is fine.
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    } catch (err) {
+      // NotAllowedError = the user cancelled the picker; not an error.
+      if (err.name !== 'NotAllowedError') {
+        setStatus(`Could not start screen share: ${err.message || err.name}`, 'error');
+      }
+      return;
+    }
+    screenStream = stream;
+    // Announce the stream id BEFORE addTrack so the watcher can tell the
+    // screen apart from the camera when ontrack fires after renegotiation.
+    signal({ type: 'screen-share', on: true, streamId: stream.id });
+    for (const track of stream.getTracks()) {
+      screenSenders.push(pc.addTrack(track, stream)); // fires onnegotiationneeded
+    }
+    // The browser's own "Stop sharing" bar ends the track outside our UI.
+    stream.getVideoTracks()[0].addEventListener('ended', stopScreenShare);
+    showScreen(stream, true);
+    $('share-screen').textContent = 'Stop sharing';
+  }
+
+  function stopScreenShare() {
+    if (!screenStream) return;
+    signal({ type: 'screen-share', on: false });
+    if (pc) {
+      for (const sender of screenSenders) {
+        try {
+          pc.removeTrack(sender); // fires onnegotiationneeded
+        } catch {
+          // pc may be closing; nothing to undo
+        }
+      }
+    }
+    screenSenders = [];
+    for (const track of screenStream.getTracks()) track.stop();
+    screenStream = null;
+    clearScreen();
+    $('share-screen').textContent = 'Share screen';
+  }
+
+  function showScreen(stream, mine) {
+    const sv = $('screen-video');
+    sv.muted = mine; // don't echo our own shared audio back at us
+    sv.srcObject = stream;
+    sv.hidden = false;
+    $('videos').classList.add('screen-active');
+    tryPlay(sv);
+  }
+
+  function clearScreen() {
+    const sv = $('screen-video');
+    sv.srcObject = null;
+    sv.hidden = true;
+    $('videos').classList.remove('screen-active');
+  }
+
   // Autoplay with audio can be blocked when the page was opened without a user
   // gesture (the watcher just clicked a link elsewhere). Fail loudly: show a
   // button instead of a silently frozen video.
-  async function tryPlayRemote() {
+  async function tryPlay(video) {
     try {
-      await $('remote-video').play();
+      await video.play();
       $('tap-to-play').hidden = true;
     } catch {
       $('tap-to-play').hidden = false;
     }
   }
 
-  $('tap-to-play').addEventListener('click', tryPlayRemote);
+  $('tap-to-play').addEventListener('click', () => {
+    tryPlay($('remote-video'));
+    if (!$('screen-video').hidden) tryPlay($('screen-video'));
+  });
 
   // ---- Relay-test message box (becomes the P1 chat sidebar) ----
   $('send-form').addEventListener('submit', (e) => {

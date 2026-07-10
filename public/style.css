@@ -66,6 +66,30 @@ input {
 
 #videos { position: relative; }
 
+#screen-video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 10px;
+  display: block;
+}
+
+/* While a screen is shared it is the main pane; both cameras shrink to tiles. */
+#videos.screen-active #remote-video {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  width: 20%;
+  aspect-ratio: auto;
+  border-radius: 8px;
+  border: 1px solid #33363e;
+}
+
+#videos.screen-active #local-video { width: 20%; }
+
+#controls { display: flex; gap: 0.5rem; }
+button:disabled { background: #33363e; color: #7d8089; cursor: default; }
+
 #remote-video {
   width: 100%;
   aspect-ratio: 16 / 9;
