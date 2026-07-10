@@ -1,6 +1,13 @@
-// CoWatch client — Phase 1: room join + relayed messages over the signaling socket.
+// CoWatch client — Phase 2: camera-to-camera call over the Phase 1 signaling channel.
+//
+// The RTCPeerConnection uses the "perfect negotiation" pattern: any track added
+// later (Phase 3 screen share) fires onnegotiationneeded and renegotiates over
+// the same connection — no teardown. Role asymmetry: whoever joins an occupied
+// room is the polite peer; the occupant is impolite.
 
 const $ = (id) => document.getElementById(id);
+
+const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 
 const roomMatch = location.pathname.match(/^\/r\/([\w-]{4,64})$/);
 
@@ -41,15 +48,30 @@ function enterRoom(roomId) {
     status.className = `status ${kind}`;
   };
 
+  // ---- State ----
+  let peerPresent = false;
+  let polite = false;
+  let rejected = false; // room-full: keep that status when the server closes the socket
+  let localStream = null;
+  let pc = null;
+  let makingOffer = false;
+  let ignoreOffer = false;
+
+  // ---- Signaling socket ----
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}`);
-  let peerPresent = false;
-  let rejected = false; // room-full: keep that status when the server closes the socket
+
+  const signal = (msg) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  };
 
   ws.addEventListener('open', () => {
-    ws.send(JSON.stringify({ type: 'join', room: roomId }));
+    signal({ type: 'join', room: roomId });
   });
 
+  // Handle messages strictly in arrival order: SDP handling is async, and an
+  // ice-candidate must not be processed before its offer finishes applying.
+  let inbox = Promise.resolve();
   ws.addEventListener('message', (event) => {
     let msg;
     try {
@@ -57,31 +79,7 @@ function enterRoom(roomId) {
     } catch {
       return;
     }
-
-    switch (msg.type) {
-      case 'joined':
-        peerPresent = msg.peers === 2;
-        setStatus(
-          peerPresent ? 'Connected — your friend is here.' : 'Waiting for the other person to join…',
-          peerPresent ? 'ok' : ''
-        );
-        break;
-      case 'peer-joined':
-        peerPresent = true;
-        setStatus('Connected — your friend is here.', 'ok');
-        break;
-      case 'peer-left':
-        peerPresent = false;
-        setStatus('The other person left. Waiting for them to rejoin…', 'warn');
-        break;
-      case 'room-full':
-        rejected = true;
-        setStatus('This room already has two people. Rooms are limited to two.', 'error');
-        break;
-      case 'chat':
-        appendMessage('Them', msg.text);
-        break;
-    }
+    inbox = inbox.then(() => handleSignal(msg)).catch((err) => console.error('signal error:', err));
   });
 
   ws.addEventListener('close', () => {
@@ -92,12 +90,183 @@ function enterRoom(roomId) {
     setStatus('Could not reach the server.', 'error');
   });
 
+  async function handleSignal(msg) {
+    switch (msg.type) {
+      case 'joined':
+        peerPresent = msg.peers === 2;
+        polite = peerPresent; // joined an occupied room -> polite peer
+        if (peerPresent) {
+          setStatus('Your friend is here — connecting cameras…', 'ok');
+          createPeerConnection();
+        } else {
+          setStatus('Waiting for the other person to join…');
+        }
+        break;
+      case 'peer-joined':
+        peerPresent = true;
+        polite = false; // we were here first -> impolite peer
+        setStatus('Your friend is here — connecting cameras…', 'ok');
+        createPeerConnection();
+        break;
+      case 'peer-left':
+        peerPresent = false;
+        teardownPeerConnection();
+        setStatus('The other person left. Waiting for them to rejoin…', 'warn');
+        break;
+      case 'room-full':
+        rejected = true;
+        setStatus('This room already has two people. Rooms are limited to two.', 'error');
+        break;
+      case 'offer':
+      case 'answer':
+        if (!pc) createPeerConnection();
+        await handleDescription(msg.sdp);
+        break;
+      case 'ice-candidate':
+        if (!pc) break;
+        try {
+          await pc.addIceCandidate(msg.candidate);
+        } catch (err) {
+          if (!ignoreOffer) console.warn('addIceCandidate failed:', err);
+        }
+        break;
+      case 'chat':
+        appendMessage('Them', msg.text);
+        break;
+    }
+  }
+
+  // ---- Local media ----
+  startLocalMedia();
+
+  async function startLocalMedia() {
+    $('media-error').hidden = true;
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      $('local-video').srcObject = localStream;
+      addLocalTracks();
+    } catch (err) {
+      showMediaError(err);
+    }
+  }
+
+  function showMediaError(err) {
+    const box = $('media-error');
+    let reason;
+    if (err.name === 'NotAllowedError') {
+      reason = 'Camera/microphone permission was denied. Allow access in your browser, then try again.';
+    } else if (err.name === 'NotFoundError') {
+      reason = 'No camera or microphone was found on this device.';
+    } else if (err.name === 'NotReadableError') {
+      reason = 'Your camera or microphone is in use by another app.';
+    } else {
+      reason = `Could not start camera/microphone: ${err.message || err.name}`;
+    }
+    $('media-error-text').textContent = reason;
+    box.hidden = false;
+  }
+
+  $('retry-media').addEventListener('click', startLocalMedia);
+
+  // ---- Peer connection (perfect negotiation) ----
+  function createPeerConnection() {
+    if (pc) return;
+    pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+    pc.onnegotiationneeded = async () => {
+      try {
+        makingOffer = true;
+        await pc.setLocalDescription();
+        signal({ type: pc.localDescription.type, sdp: pc.localDescription });
+      } catch (err) {
+        console.error('negotiation failed:', err);
+      } finally {
+        makingOffer = false;
+      }
+    };
+
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate) signal({ type: 'ice-candidate', candidate });
+    };
+
+    pc.ontrack = ({ streams }) => {
+      const remote = $('remote-video');
+      if (streams[0] && remote.srcObject !== streams[0]) {
+        remote.srcObject = streams[0];
+        tryPlayRemote();
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      switch (pc?.connectionState) {
+        case 'connected':
+          setStatus('Connected — cameras linked.', 'ok');
+          break;
+        case 'disconnected':
+          setStatus('Connection unstable — trying to recover…', 'warn');
+          break;
+        case 'failed':
+          setStatus('The peer-to-peer connection failed. Both of you may need to refresh.', 'error');
+          break;
+      }
+    };
+
+    addLocalTracks();
+  }
+
+  function addLocalTracks() {
+    if (!pc || !localStream) return;
+    const sending = new Set(pc.getSenders().map((s) => s.track));
+    for (const track of localStream.getTracks()) {
+      if (!sending.has(track)) pc.addTrack(track, localStream);
+    }
+  }
+
+  async function handleDescription(description) {
+    const offerCollision =
+      description.type === 'offer' && (makingOffer || pc.signalingState !== 'stable');
+    ignoreOffer = !polite && offerCollision;
+    if (ignoreOffer) return;
+
+    await pc.setRemoteDescription(description);
+    if (description.type === 'offer') {
+      await pc.setLocalDescription();
+      signal({ type: 'answer', sdp: pc.localDescription });
+    }
+  }
+
+  function teardownPeerConnection() {
+    if (pc) {
+      pc.close();
+      pc = null;
+    }
+    $('remote-video').srcObject = null;
+    $('tap-to-play').hidden = true;
+    makingOffer = false;
+    ignoreOffer = false;
+  }
+
+  // Autoplay with audio can be blocked when the page was opened without a user
+  // gesture (the watcher just clicked a link elsewhere). Fail loudly: show a
+  // button instead of a silently frozen video.
+  async function tryPlayRemote() {
+    try {
+      await $('remote-video').play();
+      $('tap-to-play').hidden = true;
+    } catch {
+      $('tap-to-play').hidden = false;
+    }
+  }
+
+  $('tap-to-play').addEventListener('click', tryPlayRemote);
+
+  // ---- Relay-test message box (becomes the P1 chat sidebar) ----
   $('send-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const input = $('send-input');
     const text = input.value.trim();
     if (!text || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'chat', text }));
+    signal({ type: 'chat', text });
     appendMessage('You', text);
     input.value = '';
   });

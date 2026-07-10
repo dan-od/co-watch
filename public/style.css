@@ -53,10 +53,50 @@ input {
 .status.warn { color: #e6b95c; }
 .status.error { color: #ef7070; }
 
+#media-error {
+  border: 1px solid #6e3a3a;
+  background: #2a1d1d;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+#media-error p { margin: 0; color: #ef9a9a; flex: 1; }
+
+#videos { position: relative; }
+
+#remote-video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 10px;
+  display: block;
+}
+
+#local-video {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  width: 25%;
+  border-radius: 8px;
+  border: 1px solid #33363e;
+  background: #000;
+  transform: scaleX(-1); /* mirror self-view only */
+}
+
+#tap-to-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 1.05rem;
+}
+
 #messages {
   flex: 1;
-  min-height: 240px;
-  max-height: 50vh;
+  min-height: 120px;
+  max-height: 30vh;
   overflow-y: auto;
   border: 1px solid #33363e;
   border-radius: 8px;
