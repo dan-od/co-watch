@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CoWatch</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Landing view -->
+  <section id="landing" hidden>
+    <h1>CoWatch</h1>
+    <p>Watch something together. Create a room and send the link to one other person.</p>
+    <button id="create-room">Create room</button>
+  </section>
+
+  <!-- Room view -->
+  <section id="room" hidden>
+    <header>
+      <h1>CoWatch</h1>
+      <div id="room-link-row">
+        <input id="room-link" readonly>
+        <button id="copy-link">Copy link</button>
+      </div>
+    </header>
+
+    <p id="status" class="status">Connecting…</p>
+
+    <!-- Phase 1 relay test: becomes the chat sidebar in P1 -->
+    <div id="messages" aria-live="polite"></div>
+    <form id="send-form">
+      <input id="send-input" placeholder="Type a message…" autocomplete="off">
+      <button type="submit">Send</button>
+    </form>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

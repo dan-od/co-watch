@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(git init)",
+      "PowerShell(git add PRD.md)",
+      "PowerShell(git commit -m \"Initial commit: PRD\")",
+      "PowerShell(npm install)",
+      "PowerShell(git add -A)"
+    ]
+  }
+}
