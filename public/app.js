@@ -7,7 +7,23 @@
 
 const $ = (id) => document.getElementById(id);
 
-const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+// ICE servers come from the server (/ice-config), which reads TURN credentials
+// from its environment. Falls back to STUN-only if the endpoint is unreachable.
+async function fetchIceConfig() {
+  try {
+    const res = await fetch('/ice-config');
+    if (res.ok) {
+      const cfg = await res.json();
+      if (Array.isArray(cfg.iceServers) && cfg.iceServers.length) {
+        return { iceServers: cfg.iceServers, forceRelay: !!cfg.forceRelay };
+      }
+    }
+  } catch {
+    // fall through
+  }
+  console.warn('Could not fetch /ice-config — falling back to STUN-only.');
+  return { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], forceRelay: false };
+}
 
 const roomMatch = location.pathname.match(/^\/r\/([\w-]{4,64})$/);
 
@@ -49,6 +65,7 @@ function enterRoom(roomId) {
   };
 
   // ---- State ----
+  const iceConfigPromise = fetchIceConfig(); // start early; awaited on pc creation
   let peerPresent = false;
   let polite = false;
   let rejected = false; // room-full: keep that status when the server closes the socket
@@ -97,7 +114,7 @@ function enterRoom(roomId) {
         polite = peerPresent; // joined an occupied room -> polite peer
         if (peerPresent) {
           setStatus('Your friend is here — connecting cameras…', 'ok');
-          createPeerConnection();
+          await createPeerConnection();
         } else {
           setStatus('Waiting for the other person to join…');
         }
@@ -106,7 +123,7 @@ function enterRoom(roomId) {
         peerPresent = true;
         polite = false; // we were here first -> impolite peer
         setStatus('Your friend is here — connecting cameras…', 'ok');
-        createPeerConnection();
+        await createPeerConnection();
         break;
       case 'peer-left':
         peerPresent = false;
@@ -119,7 +136,7 @@ function enterRoom(roomId) {
         break;
       case 'offer':
       case 'answer':
-        if (!pc) createPeerConnection();
+        if (!pc) await createPeerConnection();
         await handleDescription(msg.sdp);
         break;
       case 'ice-candidate':
@@ -169,9 +186,15 @@ function enterRoom(roomId) {
   $('retry-media').addEventListener('click', startLocalMedia);
 
   // ---- Peer connection (perfect negotiation) ----
-  function createPeerConnection() {
+  // Only called from handleSignal, which is serialized by the inbox queue,
+  // so the await cannot double-create the connection.
+  async function createPeerConnection() {
     if (pc) return;
-    pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const { iceServers, forceRelay } = await iceConfigPromise;
+    pc = new RTCPeerConnection({
+      iceServers,
+      iceTransportPolicy: forceRelay ? 'relay' : 'all',
+    });
 
     pc.onnegotiationneeded = async () => {
       try {

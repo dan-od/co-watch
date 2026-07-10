@@ -5,7 +5,13 @@
       "PowerShell(git add PRD.md)",
       "PowerShell(git commit -m \"Initial commit: PRD\")",
       "PowerShell(npm install)",
-      "PowerShell(git add -A)"
+      "PowerShell(git add -A)",
+      "PowerShell($c = Get-Command cloudflared -ErrorAction SilentlyContinue; if \\($c\\) { \"FOUND: $\\($c.Source\\)\"; cloudflared --version } else { \"NOT INSTALLED\" }; \"---\"; \\(Get-Command winget -ErrorAction SilentlyContinue\\).Source)",
+      "PowerShell(winget install --id Cloudflare.cloudflared --accept-source-agreements --accept-package-agreements --disable-interactivity)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); $c = Get-Command cloudflared -ErrorAction SilentlyContinue; if \\($c\\) { \"FOUND: $\\($c.Source\\)\"; cloudflared --version } else { \"STILL NOT ON PATH\" })",
+      "PowerShell($t = Test-NetConnection -ComputerName localhost -Port 8080 -WarningAction SilentlyContinue; \"TcpTestSucceeded: $\\($t.TcpTestSucceeded\\)\")",
+      "PowerShell(Invoke-RestMethod http://localhost:8080/ice-config)",
+      "PowerShell(\\(Invoke-RestMethod http://localhost:8080/ice-config\\).forceRelay; git status --short)"
     ]
   }
 }

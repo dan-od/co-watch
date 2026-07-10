@@ -7,8 +7,41 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 
+// Load .env (simple KEY=VALUE lines) without a dependency. Real env vars win.
+try {
+  const envText = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
+  for (const line of envText.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (m && !line.trimStart().startsWith('#') && !(m[1] in process.env)) {
+      process.env[m[1]] = m[2];
+    }
+  }
+} catch {
+  // no .env — fine, run STUN-only
+}
+
 const PORT = process.env.PORT || 8080;
 const PUBLIC_DIR = path.join(__dirname, 'public');
+
+// ICE config served to clients. TURN credentials come from the environment
+// (PRD §15: secrets never go in source). Note: whatever is served here is
+// visible to anyone who can open a room link — inherent to browser TURN.
+function iceConfig() {
+  const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+  const turnUrls = (process.env.TURN_URLS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (turnUrls.length && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+    iceServers.push({
+      urls: turnUrls,
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL,
+    });
+  }
+  const forceRelay = /^(1|true|yes)$/i.test(process.env.FORCE_RELAY || '');
+  return { iceServers, forceRelay };
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -21,6 +54,12 @@ const MIME = {
 
 const server = http.createServer((req, res) => {
   const urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+
+  if (urlPath === '/ice-config') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(iceConfig()));
+    return;
+  }
 
   // Room links (/r/<id>) and the landing page both serve the SPA shell.
   let filePath;
@@ -118,5 +157,15 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, () => {
+  const { iceServers, forceRelay } = iceConfig();
+  const turnConfigured = iceServers.length > 1;
   console.log(`CoWatch listening on http://localhost:${PORT}`);
+  console.log(`TURN: ${turnConfigured ? 'configured' : 'not configured (STUN-only)'}`);
+  if (forceRelay) {
+    console.log(
+      turnConfigured
+        ? 'FORCE_RELAY is ON — all media will go through TURN (testing mode).'
+        : 'WARNING: FORCE_RELAY is ON but no TURN is configured — connections WILL fail.'
+    );
+  }
 });
