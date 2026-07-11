@@ -1,8 +1,16 @@
 # CoWatch
 
-Two-person "watch together" web app: WebRTC peer-to-peer camera/mic (and, in a
-later phase, screen share), with a tiny Node + `ws` signaling server. No
-accounts; rooms are ephemeral random links. See [prd.md](prd.md) for the full spec.
+Two-person "watch together" web app: WebRTC peer-to-peer camera/mic + screen
+share + synced playback, with a tiny Node + `ws` signaling server. No accounts;
+rooms are ephemeral random links. See [cowatch-prd.md](cowatch-prd.md) for the
+full spec.
+
+The whole app is one fixed window (no page scroll): a top bar (wordmark, status
+dot, **Share / Sync** tabs, room link, TorBox settings gear), a stage (video +
+collapsible chat rail + square camera tiles — partner ringed amber), and a
+bottom control bar (mode action on the left; Pop out / mic / camera / chat /
+leave on the right). Warm cinema palette, squared corners, Space Grotesk
+wordmark.
 
 ## Run
 
@@ -41,16 +49,22 @@ can rotate.
 
 ## Watching together — two modes
 
-**Share my screen (Mode A).** The sharer picks a tab/window/screen via the
-browser picker; the watcher sees it live. Tuned for video: the capture is
-capped at 1080p/30fps, the encoder favors motion (`contentHint='motion'`),
-and the screen sender's bitrate is capped (2.5 Mbps default — adjust
-`SCREEN_MAX_BITRATE` at the top of `public/app.js`). Share the browser
-**tab** playing the video, not the whole screen: smoother, can carry tab
-audio, and keeps the rest of your screen private. While sharing, **Pop
-partner cam out** floats your friend's camera in a Picture-in-Picture window
-that stays visible over fullscreen video without entering a tab/window share
-(a full-monitor share would capture it — the in-app indicator warns you).
+**Share (Mode A).** The sharer picks a tab/window via the browser picker; the
+watcher sees it live. Tuned for video: capture capped at 1080p/30fps, encoder
+favors motion (`contentHint='motion'`), sender bitrate capped (2.5 Mbps
+default — adjust `SCREEN_MAX_BITRATE` at the top of `public/app.js`). The call
+uses `selfBrowserSurface:'exclude'` so the CoWatch tab isn't offered as a
+capture source (no hall-of-mirrors) and `preferCurrentTab:false`. Share the
+**tab** playing the video, not the whole screen: smoother, can carry tab audio,
+keeps the rest of your screen private, and keeps the Document PiP companion out
+of the shared feed (a whole-monitor share would capture it — the in-app
+indicator warns you).
+
+**Pop out (Document Picture-in-Picture).** The bottom-bar "Pop out" button opens
+a floating always-on-top window holding the **partner camera + chat**, so the
+sharer can fullscreen the movie and still see/talk to their friend. Chrome/Edge
+only — on Firefox/Safari the button is disabled with a tooltip. Closing the
+window returns the camera and chat to the main layout.
 
 **Watch together / sync (Mode B).** Paste a link; both players stay in sync
 (play/pause/seek relayed over the room's WebSocket, target ~½ s). Supported
@@ -64,19 +78,32 @@ sources:
 | Magnet link or 40-char torrent hash | TorBox → resolved to a direct URL, played in native `<video>` |
 | Anything else | Not supported — use Share screen |
 
-The **Resync** button pushes your current position/state to your friend.
+In Sync mode a **URL / TorBox** toggle sits next to the input. **Resync** pushes
+your current position/state to your friend.
 
 ### TorBox
 
-Each user pastes their own TorBox API key under **TorBox settings** in sync
-mode. The key is stored in `localStorage` only and is sent per-request
-through this server's `/torbox/*` proxy (the TorBox API doesn't allow
-browser calls directly); the server never stores or logs it. When one person
-loads a magnet, the other's app resolves the same magnet with **their own**
-key — TorBox download links are IP-locked, so each side needs its own. If
-the other side has no key, their app tries the sharer's resolved URL and
-shows a clear message if TorBox rejects it. Uncached torrents are added to
-your TorBox account and start downloading — check back later.
+Open **TorBox settings** (the gear in the top bar), paste your API key, and
+click **Save** — it validates against TorBox and shows **Valid** (green) or
+**Invalid** (red). The key is stored in `localStorage` only and sent
+per-request through this server's `/torbox/*` proxy (the TorBox API isn't
+CORS-enabled for browsers); the server never stores or logs it. Get your key
+from torbox.app/dashboard.
+
+Flip the input to **TorBox** mode, paste a magnet link or 40-char hash, and
+click **Load**: the app fetches the torrent, lists its video files in a
+dropdown (largest picked by default), resolves the chosen file to a direct
+stream URL, and plays it in a native `<video>` that syncs like any other
+source. When one person loads a magnet, the other's app resolves the same
+magnet with **their own** key — TorBox download links are IP-locked, so each
+side needs its own; if the other side has no key it falls back to the sharer's
+URL and shows a clear message if TorBox rejects it. Uncached torrents are added
+to your account and start downloading — check back later.
+
+Server routes: `/torbox/check` (validate key), `/torbox/fetch` (torrent
+metadata + files), `/torbox/load` (file → stream URL). The raw Phase-4b
+pass-throughs (`/torbox/checkcached`, `/createtorrent`, `/requestdl`) remain for
+compatibility.
 
 ## Testing that TURN works
 
@@ -94,7 +121,8 @@ your TorBox account and start downloading — check back later.
 - [x] Phase 1 — signaling server + rooms (relayed messages)
 - [x] Phase 2 — camera-to-camera call (perfect negotiation, STUN + TURN fallback)
 - [ ] Phase 3 — screen share
-- [x] Phase 4a — screen-share tuning (bitrate cap, contentHint, PiP partner cam)
-- [x] Phase 4b — sync mode (YouTube / Vimeo / direct video / TorBox) — see PRD §16
+- [x] Phase 4a — screen-share tuning (bitrate cap, contentHint, tab-capture self-exclude)
+- [x] Phase 4b — sync mode (YouTube / Vimeo / direct video / TorBox)
+- [x] Phase 4c — single-window restyle, Document PiP companion, TorBox UI
 - [ ] Phase 5 — robustness
 - [ ] Phase 6 — polish (chat, screen audio, swap view)

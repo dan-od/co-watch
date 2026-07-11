@@ -13,7 +13,9 @@
       "PowerShell(Invoke-RestMethod http://localhost:8080/ice-config)",
       "PowerShell(\\(Invoke-RestMethod http://localhost:8080/ice-config\\).forceRelay; git status --short)",
       "PowerShell(git commit -F \"C:\\\\Users\\\\danie\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-danie-Desktop-Codes-CoWatch\\\\d9d96a9d-e2bb-4457-ba9d-9069cf79af04\\\\scratchpad\\\\commit-msg.txt\")",
-      "PowerShell(node --version; try { $r = Invoke-WebRequest -Uri \"https://api.torbox.app/v1/api/torrents/checkcached?hash=0000000000000000000000000000000000000000\" -Headers @{Authorization=\"Bearer probe-invalid\"} -UseBasicParsing -TimeoutSec 15 } catch { $_.Exception.Response.StatusCode.value__; $reader = New-Object IO.StreamReader\\($_.Exception.Response.GetResponseStream\\(\\)\\); $reader.ReadToEnd\\(\\).Substring\\(0, [Math]::Min\\(300, 1000\\)\\) })"
+      "PowerShell(node --version; try { $r = Invoke-WebRequest -Uri \"https://api.torbox.app/v1/api/torrents/checkcached?hash=0000000000000000000000000000000000000000\" -Headers @{Authorization=\"Bearer probe-invalid\"} -UseBasicParsing -TimeoutSec 15 } catch { $_.Exception.Response.StatusCode.value__; $reader = New-Object IO.StreamReader\\($_.Exception.Response.GetResponseStream\\(\\)\\); $reader.ReadToEnd\\(\\).Substring\\(0, [Math]::Min\\(300, 1000\\)\\) })",
+      "Bash(node --check server.js)",
+      "Bash(node --check public/app.js)"
     ]
   }
 }

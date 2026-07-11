@@ -100,7 +100,103 @@ async function handleTorbox(req, res, urlPath) {
     sendJson(res, 400, { success: false, detail: 'missing apiKey' });
     return;
   }
+  const authHeaders = { Authorization: `Bearer ${apiKey}` };
+  const tbJson = (r) => r.json().catch(() => null);
+
   try {
+    // ---- Composed endpoints (Phase 4c/4d UI) ----
+
+    if (urlPath === '/torbox/check') {
+      // Validate the API key against the user endpoint.
+      const r = await fetch(`${TORBOX_API}/user/me?settings=false`, { headers: authHeaders });
+      const j = await tbJson(r);
+      sendJson(res, 200, {
+        valid: !!j?.success,
+        plan: j?.data?.plan ?? null,
+        detail: j?.success ? null : j?.detail || `HTTP ${r.status}`,
+      });
+      return;
+    }
+
+    if (urlPath === '/torbox/fetch') {
+      // Fetch torrent metadata. First call: {magnet, hash} — checks cache,
+      // adds the torrent, returns files. Poll call: {torrentId} — returns
+      // download state/progress/files for an already-added torrent.
+      let torrentId = body.torrentId ?? null;
+      let cached = null;
+      if (!torrentId) {
+        const hash = String(body.hash || '').toLowerCase();
+        const ccR = await fetch(`${TORBOX_API}/torrents/checkcached?format=object&list_files=true`, {
+          method: 'POST',
+          headers: { ...authHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hashes: [hash] }),
+        });
+        const cc = await tbJson(ccR);
+        if (cc?.success === false && cc?.detail) {
+          sendJson(res, 200, { success: false, detail: cc.detail });
+          return;
+        }
+        cached = !!cc?.data?.[hash];
+        const form = new FormData();
+        form.set('magnet', String(body.magnet || ''));
+        const ctR = await fetch(`${TORBOX_API}/torrents/createtorrent`, {
+          method: 'POST',
+          headers: authHeaders,
+          body: form,
+        });
+        const ct = await tbJson(ctR);
+        torrentId = ct?.data?.torrent_id ?? ct?.data?.id ?? null;
+        if (!torrentId) {
+          // Torrent may already exist in the account — find it by hash.
+          const mlR = await fetch(`${TORBOX_API}/torrents/mylist?bypass_cache=true`, { headers: authHeaders });
+          const ml = await tbJson(mlR);
+          const list = Array.isArray(ml?.data) ? ml.data : [];
+          torrentId = list.find((t) => (t?.hash || '').toLowerCase() === hash)?.id ?? null;
+        }
+        if (!torrentId) {
+          sendJson(res, 200, { success: false, detail: ct?.detail || 'TorBox did not accept this torrent' });
+          return;
+        }
+      }
+      const tR = await fetch(`${TORBOX_API}/torrents/mylist?id=${encodeURIComponent(torrentId)}&bypass_cache=true`, {
+        headers: authHeaders,
+      });
+      const tj = await tbJson(tR);
+      const t = Array.isArray(tj?.data) ? tj.data[0] : tj?.data;
+      const files = (t?.files || []).map((f, i) => ({
+        id: f?.id ?? i,
+        name: f?.name || f?.short_name || `file ${i}`,
+        size: f?.size ?? 0,
+        mimetype: f?.mimetype || '',
+      }));
+      sendJson(res, 200, {
+        success: true,
+        torrentId,
+        cached,
+        state: t?.download_state ?? 'unknown',
+        progress: typeof t?.progress === 'number' ? t.progress : 0,
+        finished: !!t?.download_finished,
+        files,
+      });
+      return;
+    }
+
+    if (urlPath === '/torbox/load') {
+      // Resolve a torrent file to a direct stream URL.
+      const q = new URLSearchParams({ token: apiKey, torrent_id: String(body.torrentId ?? '') });
+      if (body.fileId != null) q.set('file_id', String(body.fileId));
+      const r = await fetch(`${TORBOX_API}/torrents/requestdl?${q}`);
+      const j = await tbJson(r);
+      const streamUrl = typeof j?.data === 'string' ? j.data : j?.data?.url;
+      if (!streamUrl) {
+        sendJson(res, 200, { success: false, detail: j?.detail || 'TorBox did not return a download URL' });
+        return;
+      }
+      sendJson(res, 200, { success: true, streamUrl });
+      return;
+    }
+
+    // ---- Raw pass-through endpoints (Phase 4b; kept for compatibility) ----
     let upstream;
     if (urlPath === '/torbox/checkcached') {
       upstream = await fetch(`${TORBOX_API}/torrents/checkcached?format=object&list_files=true`, {

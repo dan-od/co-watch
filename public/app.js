@@ -1,24 +1,29 @@
 // CoWatch client.
 // Phase 1: room join + relayed messages.  Phase 2: camera call (perfect
 // negotiation).  Phase 3: screen share with mid-session renegotiation.
-// Phase 4a: screen-share tuning + partner-cam PiP.  Phase 4b: sync mode
-// (YouTube / Vimeo / direct video / TorBox) over the signaling channel.
+// Phase 4a: screen-share tuning + tab-capture self-exclude.  Phase 4b: sync
+// mode (YouTube / Vimeo / direct video / TorBox).  Phase 4c: single-window
+// restyle + Document Picture-in-Picture companion.
 
 const $ = (id) => document.getElementById(id);
 
 // ---- Tunables ----
 const SCREEN_MAX_BITRATE = 2_500_000; // bps for the shared-screen video sender (Phase 4a) — adjust here
 const SCREEN_CONSTRAINTS = {
-  // Cap capture at 1080p30 (Phase 4a); the picker's "share audio" checkbox
-  // comes from audio:true.
+  // Cap capture at 1080p30 (Phase 4a). selfBrowserSurface:'exclude' keeps the
+  // CoWatch tab out of the picker (no hall-of-mirrors, and the Document PiP
+  // companion stays out of a tab/window share). preferCurrentTab:false nudges
+  // toward sharing another tab. audio:true adds the "share audio" checkbox.
   video: { width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 30 } },
   audio: true,
+  selfBrowserSurface: 'exclude',
+  preferCurrentTab: false,
 };
 const SYNC_DRIFT_TOLERANCE = 0.75; // seconds — follower seeks if further off than this
 const SYNC_SUPPRESS_MS = 800; // echo-suppression window after applying a remote sync event
 
 const UNSUPPORTED_MSG =
-  'Sync mode supports YouTube, Vimeo, direct video links, and TorBox magnets. ' +
+  'Sync mode supports YouTube, Vimeo, direct video links, and TorBox/Stremio content. ' +
   'For anything else, use Share screen instead.';
 
 // ICE servers come from the server (/ice-config), which reads TURN credentials
@@ -50,8 +55,7 @@ if (roomMatch) {
 function showLanding() {
   $('landing').hidden = false;
   $('create-room').addEventListener('click', () => {
-    const id = randomRoomId();
-    location.href = `/r/${id}`;
+    location.href = `/r/${randomRoomId()}`;
   });
 }
 
@@ -97,10 +101,9 @@ function detectSource(raw) {
 }
 
 // ---- Player adapters (Phase 4b) ----
-// Uniform interface: { play, pause, seek(t), getTime()->number|Promise,
-// isPaused()->bool|Promise, setRate(r), destroy(), el? }.
-// Each adapter calls report(action, time, rate) on LOCAL user actions only;
-// the caller handles echo suppression.
+// Uniform interface: { play, pause, seek(t), getTime(), isPaused(), setRate(r),
+// destroy(), el? }. Each adapter calls report(action, time, rate) on LOCAL
+// user actions only; the caller handles echo suppression.
 
 let ytApiPromise = null;
 function loadYouTubeApi() {
@@ -156,7 +159,7 @@ async function createYouTubePlayer(container, videoId, report) {
     play: () => yt.playVideo(),
     pause: () => yt.pauseVideo(),
     seek: (t) => {
-      lastT = t; // keep the seek-poll from re-reporting a remote seek
+      lastT = t;
       lastWall = Date.now();
       yt.seekTo(t, true);
     },
@@ -242,51 +245,65 @@ function createNativePlayer(container, url, report, onError, onAutoplayBlocked) 
 
 function enterRoom(roomId) {
   $('room').hidden = false;
-  const linkInput = $('room-link');
-  linkInput.value = location.href;
+  $('room-link').value = location.href;
+
+  // These three nodes get relocated into the Document PiP window, where
+  // document.getElementById (main doc) can no longer find them — hold stable
+  // references and use them everywhere instead of re-querying by id.
+  const elRemote = $('remote-video');
+  const elMessages = $('messages');
+  const elSendForm = $('send-form');
 
   $('copy-link').addEventListener('click', async () => {
-    await navigator.clipboard.writeText(linkInput.value);
-    $('copy-link').textContent = 'Copied!';
-    setTimeout(() => ($('copy-link').textContent = 'Copy link'), 1500);
+    await navigator.clipboard.writeText(location.href);
+    $('copy-link').textContent = 'Copied';
+    setTimeout(() => ($('copy-link').textContent = 'Copy'), 1500);
   });
 
-  const status = $('status');
+  // ---- Status (top bar) + notice (stage overlay) ----
   const setStatus = (text, kind = '') => {
-    status.textContent = text;
-    status.className = `status ${kind}`;
+    $('status').textContent = text;
+    $('status-dot').className = kind;
+  };
+  let noticeTimer = null;
+  const notice = (text, kind = '', autoHideMs = 0) => {
+    clearTimeout(noticeTimer);
+    if (!text) {
+      $('notice').hidden = true;
+      return;
+    }
+    $('notice').textContent = text;
+    $('notice').className = `notice ${kind}`;
+    $('notice').hidden = false;
+    if (autoHideMs) noticeTimer = setTimeout(() => ($('notice').hidden = true), autoHideMs);
   };
 
   // ---- State ----
-  const iceConfigPromise = fetchIceConfig(); // start early; awaited on pc creation
+  const iceConfigPromise = fetchIceConfig();
   let peerPresent = false;
   let polite = false;
-  let rejected = false; // room-full: keep that status when the server closes the socket
+  let rejected = false;
   let localStream = null;
   let pc = null;
   let makingOffer = false;
   let ignoreOffer = false;
-  let screenStream = null; // our outgoing screen share
-  let screenSenders = []; // RTCRtpSenders for the screen tracks
-  let remoteScreenStreamId = null; // announced by the sharer before addTrack
-  let mode = 'screen'; // 'screen' (Mode A) | 'sync' (Mode B)
-  let player = null; // active sync player adapter
-  let suppressUntil = 0; // echo suppression for sync events
+  let screenStream = null;
+  let screenSenders = [];
+  let remoteScreenStreamId = null;
+  let mode = 'screen'; // 'screen' | 'sync'
+  let sourceMode = 'url'; // 'url' | 'torbox'
+  let player = null;
+  let suppressUntil = 0;
 
   // ---- Signaling socket ----
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}`);
-
   const signal = (msg) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   };
 
-  ws.addEventListener('open', () => {
-    signal({ type: 'join', room: roomId });
-  });
+  ws.addEventListener('open', () => signal({ type: 'join', room: roomId }));
 
-  // Handle messages strictly in arrival order: SDP handling is async, and an
-  // ice-candidate must not be processed before its offer finishes applying.
   let inbox = Promise.resolve();
   ws.addEventListener('message', (event) => {
     let msg;
@@ -299,41 +316,38 @@ function enterRoom(roomId) {
   });
 
   ws.addEventListener('close', () => {
-    if (!rejected) setStatus('Disconnected from the server. Refresh to reconnect.', 'error');
+    if (!rejected) setStatus('Disconnected — refresh to reconnect.', 'error');
   });
-
-  ws.addEventListener('error', () => {
-    setStatus('Could not reach the server.', 'error');
-  });
+  ws.addEventListener('error', () => setStatus('Could not reach the server.', 'error'));
 
   async function handleSignal(msg) {
     switch (msg.type) {
       case 'joined':
         peerPresent = msg.peers === 2;
-        polite = peerPresent; // joined an occupied room -> polite peer
+        polite = peerPresent;
         if (peerPresent) {
-          setStatus('Your friend is here — connecting cameras…', 'ok');
+          setStatus('Connected', 'ok');
           await createPeerConnection();
           $('share-screen').disabled = false;
         } else {
-          setStatus('Waiting for the other person to join…');
+          setStatus('Waiting for your friend…');
         }
         break;
       case 'peer-joined':
         peerPresent = true;
-        polite = false; // we were here first -> impolite peer
-        setStatus('Your friend is here — connecting cameras…', 'ok');
+        polite = false;
+        setStatus('Connected', 'ok');
         await createPeerConnection();
         $('share-screen').disabled = false;
         break;
       case 'peer-left':
         peerPresent = false;
         teardownPeerConnection();
-        setStatus('The other person left. Waiting for them to rejoin…', 'warn');
+        setStatus('Your friend left — waiting for them to rejoin…', 'warn');
         break;
       case 'room-full':
         rejected = true;
-        setStatus('This room already has two people. Rooms are limited to two.', 'error');
+        setStatus('Room is full (two people max).', 'error');
         break;
       case 'offer':
       case 'answer':
@@ -349,18 +363,16 @@ function enterRoom(roomId) {
         }
         break;
       case 'screen-share':
-        // Sent by the sharer just before addTrack, so (WS ordering) the stream
-        // id is known here before the renegotiation offer arrives.
         if (msg.on) {
           remoteScreenStreamId = msg.streamId;
-          setMode('screen'); // follow the sharer
+          setMode('screen');
         } else {
           remoteScreenStreamId = null;
           clearScreen();
         }
         break;
       case 'sync-load':
-        setMode('sync'); // follow the loader
+        setMode('sync');
         await handleRemoteLoad(msg.source);
         break;
       case 'sync':
@@ -380,6 +392,7 @@ function enterRoom(roomId) {
     try {
       localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       $('local-video').srcObject = localStream;
+      syncToggleButtons();
       addLocalTracks();
     } catch (err) {
       showMediaError(err);
@@ -387,33 +400,24 @@ function enterRoom(roomId) {
   }
 
   function showMediaError(err) {
-    const box = $('media-error');
     let reason;
-    if (err.name === 'NotAllowedError') {
-      reason = 'Camera/microphone permission was denied. Allow access in your browser, then try again.';
-    } else if (err.name === 'NotFoundError') {
-      reason = 'No camera or microphone was found on this device.';
-    } else if (err.name === 'NotReadableError') {
+    if (err.name === 'NotAllowedError')
+      reason = 'Camera/microphone permission was denied. Allow access, then try again.';
+    else if (err.name === 'NotFoundError') reason = 'No camera or microphone was found.';
+    else if (err.name === 'NotReadableError')
       reason = 'Your camera or microphone is in use by another app.';
-    } else {
-      reason = `Could not start camera/microphone: ${err.message || err.name}`;
-    }
+    else reason = `Could not start camera/microphone: ${err.message || err.name}`;
     $('media-error-text').textContent = reason;
-    box.hidden = false;
+    $('media-error').hidden = false;
   }
 
   $('retry-media').addEventListener('click', startLocalMedia);
 
   // ---- Peer connection (perfect negotiation) ----
-  // Only called from handleSignal, which is serialized by the inbox queue,
-  // so the await cannot double-create the connection.
   async function createPeerConnection() {
     if (pc) return;
     const { iceServers, forceRelay } = await iceConfigPromise;
-    pc = new RTCPeerConnection({
-      iceServers,
-      iceTransportPolicy: forceRelay ? 'relay' : 'all',
-    });
+    pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: forceRelay ? 'relay' : 'all' });
 
     pc.onnegotiationneeded = async () => {
       try {
@@ -436,22 +440,22 @@ function enterRoom(roomId) {
       if (!stream) return;
       if (stream.id === remoteScreenStreamId) {
         if ($('screen-video').srcObject !== stream) showScreen(stream, false);
-      } else if ($('remote-video').srcObject !== stream) {
-        $('remote-video').srcObject = stream;
-        tryPlay($('remote-video'));
+      } else if (elRemote.srcObject !== stream) {
+        elRemote.srcObject = stream;
+        tryPlay(elRemote);
       }
     };
 
     pc.onconnectionstatechange = () => {
       switch (pc?.connectionState) {
         case 'connected':
-          setStatus('Connected — cameras linked.', 'ok');
+          setStatus(mode === 'sync' ? 'Synced' : 'Connected', 'ok');
           break;
         case 'disconnected':
-          setStatus('Connection unstable — trying to recover…', 'warn');
+          setStatus('Connection unstable — recovering…', 'warn');
           break;
         case 'failed':
-          setStatus('The peer-to-peer connection failed. Both of you may need to refresh.', 'error');
+          setStatus('Connection failed — both of you may need to refresh.', 'error');
           break;
       }
     };
@@ -472,7 +476,6 @@ function enterRoom(roomId) {
       description.type === 'offer' && (makingOffer || pc.signalingState !== 'stable');
     ignoreOffer = !polite && offerCollision;
     if (ignoreOffer) return;
-
     await pc.setRemoteDescription(description);
     if (description.type === 'offer') {
       await pc.setLocalDescription();
@@ -485,23 +488,23 @@ function enterRoom(roomId) {
       pc.close();
       pc = null;
     }
-    stopScreenShare(); // pc-null-safe; ends our share when the peer is gone
+    stopScreenShare();
     remoteScreenStreamId = null;
     clearScreen();
     $('share-screen').disabled = true;
-    $('remote-video').srcObject = null;
+    elRemote.srcObject = null;
     $('tap-to-play').hidden = true;
     makingOffer = false;
     ignoreOffer = false;
   }
 
-  // ---- Mode toggle (Phase 4b) ----
+  // ---- Mode toggle ----
   function setMode(m) {
     if (mode === m) return;
     if (m !== 'screen' && screenStream) stopScreenShare();
     if (m !== 'sync' && player) {
       try {
-        player.pause(); // pausing on mode switch is a real user action; let it broadcast
+        player.pause();
       } catch {}
     }
     mode = m;
@@ -509,6 +512,9 @@ function enterRoom(roomId) {
     $('mode-sync').classList.toggle('active', m === 'sync');
     $('screen-pane').hidden = m !== 'screen';
     $('sync-pane').hidden = m !== 'sync';
+    $('action-share').hidden = m !== 'screen';
+    $('action-sync').hidden = m !== 'sync';
+    if (peerPresent) setStatus(m === 'sync' ? 'Synced' : 'Connected', 'ok');
   }
 
   $('mode-screen').addEventListener('click', () => setMode('screen'));
@@ -526,28 +532,22 @@ function enterRoom(roomId) {
     try {
       stream = await navigator.mediaDevices.getDisplayMedia(SCREEN_CONSTRAINTS);
     } catch (err) {
-      // NotAllowedError = the user cancelled the picker; not an error.
-      if (err.name !== 'NotAllowedError') {
-        setStatus(`Could not start screen share: ${err.message || err.name}`, 'error');
-      }
+      if (err.name !== 'NotAllowedError')
+        notice(`Could not start screen share: ${err.message || err.name}`, 'error', 6000);
       return;
     }
     screenStream = stream;
     const videoTrack = stream.getVideoTracks()[0];
-    videoTrack.contentHint = 'motion'; // favor framerate over sharpness (Phase 4a)
-    // Announce the stream id BEFORE addTrack so the watcher can tell the
-    // screen apart from the camera when ontrack fires after renegotiation.
+    videoTrack.contentHint = 'motion';
     signal({ type: 'screen-share', on: true, streamId: stream.id });
     for (const track of stream.getTracks()) {
-      const sender = pc.addTrack(track, stream); // fires onnegotiationneeded
+      const sender = pc.addTrack(track, stream);
       screenSenders.push(sender);
       if (track.kind === 'video') capSenderBitrate(sender, SCREEN_MAX_BITRATE);
     }
-    // The browser's own "Stop sharing" bar ends the track outside our UI.
     videoTrack.addEventListener('ended', stopScreenShare);
     showScreen(stream, true);
-    updateShareInfo(videoTrack);
-    $('pip-partner').hidden = false;
+    showShareInfo(videoTrack);
     $('share-screen').textContent = 'Stop sharing';
   }
 
@@ -562,19 +562,15 @@ function enterRoom(roomId) {
     }
   }
 
-  function updateShareInfo(track) {
-    const settings = track.getSettings ? track.getSettings() : {};
-    const names = { browser: 'a browser tab', window: 'an app window', monitor: 'your entire screen' };
-    let text = `Sharing ${names[settings.displaySurface] || 'your screen'}`;
-    if (settings.width && settings.height) text += ` at ${settings.width}×${settings.height}`;
+  function showShareInfo(track) {
+    const s = track.getSettings ? track.getSettings() : {};
+    const names = { browser: 'a browser tab', window: 'an app window', monitor: 'your whole screen' };
+    let text = `Sharing ${names[s.displaySurface] || 'your screen'}`;
+    if (s.width && s.height) text += ` at ${s.width}×${s.height}`;
     text += '.';
-    if (settings.displaySurface === 'monitor') {
-      text +=
-        ' Heads-up: a full-screen share includes everything on that screen — including the popped-out ' +
-        'partner cam. Share the video tab instead to keep it (and the rest of your screen) out of the feed.';
-    }
-    $('share-info').textContent = text;
-    $('share-info').hidden = false;
+    if (s.displaySurface === 'monitor')
+      text += ' Heads-up: a whole-screen share includes the popped-out partner cam. Share a tab to keep it private.';
+    notice(text, s.displaySurface === 'monitor' ? 'warn' : 'ok', s.displaySurface === 'monitor' ? 0 : 4000);
   }
 
   function stopScreenShare() {
@@ -583,28 +579,23 @@ function enterRoom(roomId) {
     if (pc) {
       for (const sender of screenSenders) {
         try {
-          pc.removeTrack(sender); // fires onnegotiationneeded
-        } catch {
-          // pc may be closing; nothing to undo
-        }
+          pc.removeTrack(sender);
+        } catch {}
       }
     }
     screenSenders = [];
     for (const track of screenStream.getTracks()) track.stop();
     screenStream = null;
     clearScreen();
-    $('share-info').hidden = true;
-    $('pip-partner').hidden = true;
-    if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
-    $('share-screen').textContent = 'Share screen';
+    $('share-screen').textContent = 'Share a tab';
   }
 
   function showScreen(stream, mine) {
     const sv = $('screen-video');
-    sv.muted = mine; // don't echo our own shared audio back at us
+    sv.muted = mine;
     sv.srcObject = stream;
     sv.hidden = false;
-    $('main-placeholder').hidden = true;
+    $('share-placeholder').hidden = true;
     tryPlay(sv);
   }
 
@@ -612,55 +603,46 @@ function enterRoom(roomId) {
     const sv = $('screen-video');
     sv.srcObject = null;
     sv.hidden = true;
-    $('main-placeholder').hidden = false;
+    $('share-placeholder').hidden = false;
   }
 
-  // Pop the PARTNER'S camera into a floating always-on-top window so the
-  // sharer still sees their friend while a fullscreen video plays. A tab or
-  // window share never captures it; a monitor share inherently would.
-  $('pip-partner').addEventListener('click', async () => {
-    try {
-      if (document.pictureInPictureElement) {
-        await document.exitPictureInPicture();
-        return;
-      }
-      await $('remote-video').requestPictureInPicture();
-    } catch (err) {
-      setStatus(`Picture-in-picture failed: ${err.message || err.name}`, 'warn');
-    }
-  });
-
   // ---- Sync mode (Mode B) ----
-  const syncStatus = (text, kind = '') => {
-    $('sync-status').textContent = text;
-    $('sync-status').className = `hint ${kind}`;
-  };
+  const spinner = (on) => ($('sync-spinner').hidden = !on);
 
-  $('torbox-key').value = localStorage.getItem('torbox_api_key') || '';
-  $('torbox-key').addEventListener('change', () => {
-    localStorage.setItem('torbox_api_key', $('torbox-key').value.trim());
-  });
+  // Source toggle (URL vs TorBox)
+  function setSourceMode(m) {
+    sourceMode = m;
+    $('source-url').classList.toggle('active', m === 'url');
+    $('source-torbox').classList.toggle('active', m === 'torbox');
+    $('sync-input').placeholder =
+      m === 'torbox' ? 'Magnet link or 40-char torrent hash' : 'YouTube / Vimeo / .mp4 URL';
+    $('file-select').hidden = true;
+  }
+  $('source-url').addEventListener('click', () => setSourceMode('url'));
+  $('source-torbox').addEventListener('click', () => setSourceMode('torbox'));
 
   $('sync-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    loadFromInput($('sync-input').value);
+    const raw = $('sync-input').value.trim();
+    if (!raw) return;
+    if (sourceMode === 'torbox') loadTorbox(raw);
+    else loadFromUrl(raw);
   });
 
-  async function loadFromInput(raw) {
+  async function loadFromUrl(raw) {
     const source = detectSource(raw);
     if (!source) return;
     if (source.kind === 'unsupported') {
-      syncStatus(UNSUPPORTED_MSG, 'warn');
+      notice(UNSUPPORTED_MSG, 'warn');
       return;
     }
     if (source.kind === 'torbox') {
-      const resolved = await resolveTorbox(source);
-      if (!resolved) return; // status already explains why
-      source.resolvedUrl = resolved;
+      // A magnet pasted in URL mode: honor it via the TorBox flow.
+      setSourceMode('torbox');
+      loadTorbox(raw);
+      return;
     }
     await loadSource(source);
-    // Share the source; for TorBox the peer prefers resolving the magnet
-    // with their own key (IP-locked links), falling back to our URL.
     signal({ type: 'sync-load', source });
   }
 
@@ -668,20 +650,19 @@ function enterRoom(roomId) {
     if (source.kind === 'torbox') {
       const myKey = (localStorage.getItem('torbox_api_key') || '').trim();
       if (myKey) {
-        syncStatus('Your friend loaded a TorBox video — resolving it with your own account…');
-        const mine = await resolveTorbox(source);
+        notice('Your friend loaded a TorBox video — resolving with your own account…');
+        const mine = await resolveTorbox(source.magnet, source.hash, source.fileName);
         if (mine) {
           await loadSource({ ...source, resolvedUrl: mine });
           return;
         }
-        // fall through to their URL (may be IP-locked; the player error explains)
       }
       if (source.resolvedUrl) {
         await loadSource(source);
         return;
       }
-      syncStatus('Enter your TorBox API key to resolve magnets (TorBox settings below).', 'warn');
-      $('torbox-settings').open = true;
+      notice('Enter your TorBox API key (gear icon) to watch this.', 'warn');
+      openSettings(true);
       return;
     }
     await loadSource(source);
@@ -690,47 +671,36 @@ function enterRoom(roomId) {
   async function loadSource(source) {
     destroyPlayer();
     const container = $('sync-player');
+    $('sync-placeholder').hidden = true;
     const report = (action, time, rate) => {
       if (Date.now() < suppressUntil) return;
       signal({ type: 'sync', action, time: time ?? 0, rate: rate ?? 1 });
     };
     try {
       if (source.kind === 'youtube') {
-        syncStatus('Loading YouTube player…');
+        notice('Loading YouTube…');
         player = await createYouTubePlayer(container, source.videoId, report);
-        syncStatus('YouTube loaded — play, pause, and seek sync automatically.', 'ok');
+        notice('YouTube loaded — play/pause/seek stay in sync.', 'ok', 4000);
       } else if (source.kind === 'vimeo') {
-        syncStatus('Loading Vimeo player…');
+        notice('Loading Vimeo…');
         player = await createVimeoPlayer(container, source.url, report);
-        syncStatus('Vimeo loaded — play, pause, and seek sync automatically.', 'ok');
+        notice('Vimeo loaded — play/pause/seek stay in sync.', 'ok', 4000);
       } else {
         const url = source.kind === 'torbox' ? source.resolvedUrl : source.url;
-        const onError = () => {
-          if (source.kind === 'torbox') {
-            syncStatus(
-              'This link requires your own TorBox account — paste the same link in your app to sync.',
-              'error'
-            );
-          } else {
-            syncStatus(
-              'Could not load this video — the host may block cross-site playback (CORS) or the format is unsupported.',
-              'error'
-            );
-          }
-        };
-        player = createNativePlayer(container, url, report, onError, () => {
-          $('tap-to-play').hidden = false;
-        });
-        syncStatus(
-          source.kind === 'torbox'
-            ? 'TorBox video loaded — play, pause, and seek sync automatically.'
-            : 'Video loaded — play, pause, and seek sync automatically.',
-          'ok'
-        );
+        const onError = () =>
+          notice(
+            source.kind === 'torbox'
+              ? 'This link requires your own TorBox account — paste the same magnet after adding your key.'
+              : 'Could not load this video — the host may block cross-site playback (CORS) or the format is unsupported.',
+            'error'
+          );
+        player = createNativePlayer(container, url, report, onError, () => ($('tap-to-play').hidden = false));
+        notice('Video loaded — play/pause/seek stay in sync.', 'ok', 4000);
       }
       $('resync').disabled = false;
     } catch (err) {
-      syncStatus(`Could not load: ${err.message || err}`, 'error');
+      notice(`Could not load: ${err.message || err}`, 'error');
+      $('sync-placeholder').hidden = false;
     }
   }
 
@@ -765,7 +735,7 @@ function enterRoom(roomId) {
     } catch (err) {
       console.warn('applying remote sync failed:', err);
     }
-    suppressUntil = Date.now() + SYNC_SUPPRESS_MS; // extend past the async work above
+    suppressUntil = Date.now() + SYNC_SUPPRESS_MS;
   }
 
   $('resync').addEventListener('click', async () => {
@@ -775,13 +745,13 @@ function enterRoom(roomId) {
       const paused = await player.isPaused();
       signal({ type: 'sync', action: 'seek', time, rate: 1 });
       signal({ type: 'sync', action: paused ? 'pause' : 'play', time, rate: 1 });
-      syncStatus('Resync sent — your friend jumps to your position.', 'ok');
+      notice('Resync sent — your friend jumps to your spot.', 'ok', 3000);
     } catch (err) {
-      syncStatus(`Resync failed: ${err.message || err}`, 'error');
+      notice(`Resync failed: ${err.message || err}`, 'error');
     }
   });
 
-  // ---- TorBox resolution (via the server's CORS proxy) ----
+  // ---- TorBox ----
   async function torboxPost(path, body) {
     const res = await fetch(path, {
       method: 'POST',
@@ -795,55 +765,268 @@ function enterRoom(roomId) {
     }
   }
 
-  async function resolveTorbox(source) {
-    const apiKey = (localStorage.getItem('torbox_api_key') || '').trim();
-    if (!apiKey) {
-      syncStatus('Enter your TorBox API key to resolve magnets (TorBox settings below).', 'warn');
-      $('torbox-settings').open = true;
-      return null;
+  function getKey() {
+    return (localStorage.getItem('torbox_api_key') || '').trim();
+  }
+
+  // Load a magnet/hash entered locally: fetch metadata → pick/confirm file →
+  // resolve stream URL → play → broadcast.
+  async function loadTorbox(raw) {
+    const src = detectSource(raw);
+    if (!src || src.kind !== 'torbox') {
+      notice('Invalid magnet link or torrent hash.', 'error');
+      return;
     }
+    const apiKey = getKey();
+    if (!apiKey) {
+      notice('Enter your TorBox API key (gear icon) to resolve magnets.', 'warn');
+      openSettings(true);
+      return;
+    }
+    spinner(true);
+    notice('Fetching torrent…');
     try {
-      syncStatus('Checking TorBox cache…');
-      const cc = await torboxPost('/torbox/checkcached', { apiKey, hashes: [source.hash] });
-      if (cc?.success === false && cc?.detail) throw new Error(cc.detail);
-      const entry = cc?.data?.[source.hash] || null;
-
-      // Add the torrent to the account either way — for uncached torrents this
-      // is what makes TorBox start downloading.
-      const ct = await torboxPost('/torbox/createtorrent', { apiKey, magnet: source.magnet });
-      const torrentId = ct?.data?.torrent_id ?? ct?.data?.id;
-      if (!entry) {
-        syncStatus('Not cached — TorBox will download it first. Check back later.', 'warn');
-        return null;
+      const meta = await torboxPost('/torbox/fetch', { apiKey, magnet: src.magnet, hash: src.hash });
+      if (!meta?.success) {
+        notice(`TorBox: ${meta?.detail || 'could not fetch torrent'}`, 'error');
+        return;
       }
-      if (!torrentId) throw new Error(ct?.detail || 'TorBox did not return a torrent id');
-
-      // Prefer the largest video file when the cache info lists files.
-      const files = Array.isArray(entry.files) ? entry.files : [];
-      const videoFile = files
-        .filter((f) => /\.(mp4|mkv|webm|m4v|mov|avi)$/i.test(f?.name || f?.short_name || ''))
-        .sort((a, b) => (b?.size || 0) - (a?.size || 0))[0];
-
-      syncStatus('Cached — requesting download link…');
-      const dl = await torboxPost('/torbox/requestdl', {
-        apiKey,
-        torrent_id: torrentId,
-        file_id: videoFile?.id,
-      });
-      const url = typeof dl?.data === 'string' ? dl.data : dl?.data?.url;
-      if (!url) throw new Error(dl?.detail || 'TorBox did not return a download URL');
-      syncStatus('TorBox link resolved.', 'ok');
-      return url;
+      const videos = (meta.files || []).filter((f) =>
+        /\.(mp4|mkv|webm|m4v|mov|avi)$/i.test(f.name || '')
+      );
+      if (!videos.length) {
+        notice(
+          meta.finished || meta.cached
+            ? 'No video files in this torrent.'
+            : 'Not cached — TorBox is downloading it first. Check back later.',
+          'warn'
+        );
+        return;
+      }
+      // File dropdown; default to the largest video.
+      videos.sort((a, b) => (b.size || 0) - (a.size || 0));
+      populateFileSelect(videos, meta.torrentId, src);
+      await loadTorboxFile(meta.torrentId, videos[0].id, src, videos[0].name);
     } catch (err) {
-      syncStatus(`TorBox error: ${err.message || err}`, 'error');
+      notice(`TorBox error: ${err.message || err}`, 'error');
+    } finally {
+      spinner(false);
+    }
+  }
+
+  function populateFileSelect(videos, torrentId, src) {
+    const sel = $('file-select');
+    sel.replaceChildren();
+    for (const f of videos) {
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = `${f.name} (${(f.size / 1e9).toFixed(2)} GB)`;
+      opt.dataset.name = f.name;
+      sel.append(opt);
+    }
+    sel.hidden = false;
+    sel.onchange = () => {
+      const opt = sel.selectedOptions[0];
+      loadTorboxFile(torrentId, sel.value, src, opt?.dataset.name);
+    };
+  }
+
+  async function loadTorboxFile(torrentId, fileId, src, fileName) {
+    spinner(true);
+    notice('Loading file…');
+    try {
+      const dl = await torboxPost('/torbox/load', { apiKey: getKey(), torrentId, fileId });
+      if (!dl?.success || !dl.streamUrl) {
+        notice(`TorBox: ${dl?.detail || 'could not get stream URL'}`, 'error');
+        return;
+      }
+      const source = {
+        kind: 'torbox',
+        magnet: src.magnet,
+        hash: src.hash,
+        fileName,
+        resolvedUrl: dl.streamUrl,
+      };
+      await loadSource(source);
+      signal({ type: 'sync-load', source });
+    } catch (err) {
+      notice(`TorBox error: ${err.message || err}`, 'error');
+    } finally {
+      spinner(false);
+    }
+  }
+
+  // Resolve a magnet with THIS user's key (used when following a peer's load,
+  // since TorBox stream URLs are IP-locked). Returns a stream URL or null.
+  async function resolveTorbox(magnet, hash, preferName) {
+    const apiKey = getKey();
+    if (!apiKey) return null;
+    try {
+      const meta = await torboxPost('/torbox/fetch', { apiKey, magnet, hash });
+      if (!meta?.success) return null;
+      const videos = (meta.files || []).filter((f) => /\.(mp4|mkv|webm|m4v|mov|avi)$/i.test(f.name || ''));
+      if (!videos.length) return null;
+      const pick =
+        videos.find((f) => f.name === preferName) ||
+        videos.sort((a, b) => (b.size || 0) - (a.size || 0))[0];
+      const dl = await torboxPost('/torbox/load', { apiKey, torrentId: meta.torrentId, fileId: pick.id });
+      return dl?.success ? dl.streamUrl : null;
+    } catch {
       return null;
     }
   }
 
+  // ---- TorBox settings panel ----
+  $('torbox-key').value = getKey();
+  updateKeyStatus(getKey() ? 'unknown' : 'empty');
+
+  function openSettings(open) {
+    $('settings-panel').hidden = !open;
+  }
+  $('settings-btn').addEventListener('click', () => openSettings($('settings-panel').hidden));
+  document.addEventListener('click', (e) => {
+    if (!$('settings-panel').hidden && !$('settings-panel').contains(e.target) && e.target !== $('settings-btn') && !$('settings-btn').contains(e.target))
+      openSettings(false);
+  });
+
+  $('torbox-save').addEventListener('click', validateAndSaveKey);
+  $('torbox-key').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      validateAndSaveKey();
+    }
+  });
+
+  async function validateAndSaveKey() {
+    const key = $('torbox-key').value.trim();
+    localStorage.setItem('torbox_api_key', key);
+    if (!key) {
+      updateKeyStatus('empty');
+      return;
+    }
+    updateKeyStatus('checking');
+    try {
+      const r = await torboxPost('/torbox/check', { apiKey: key });
+      updateKeyStatus(r?.valid ? 'valid' : 'invalid', r?.plan, r?.detail);
+    } catch {
+      updateKeyStatus('invalid', null, 'could not reach TorBox');
+    }
+  }
+
+  function updateKeyStatus(state, plan, detail) {
+    const el = $('torbox-key-status');
+    if (state === 'empty') {
+      el.textContent = 'No key saved.';
+      el.className = 'key-status';
+    } else if (state === 'unknown') {
+      el.textContent = 'Key saved (click Save to re-validate).';
+      el.className = 'key-status';
+    } else if (state === 'checking') {
+      el.textContent = 'Checking…';
+      el.className = 'key-status';
+    } else if (state === 'valid') {
+      el.textContent = plan ? `Valid — ${plan} plan.` : 'Valid.';
+      el.className = 'key-status valid';
+    } else {
+      el.textContent = `Invalid${detail ? ` — ${detail}` : ''}.`;
+      el.className = 'key-status invalid';
+    }
+  }
+
+  // ---- Control cluster: mic / cam / chat / leave ----
+  function syncToggleButtons() {
+    const audio = localStream?.getAudioTracks()[0];
+    const video = localStream?.getVideoTracks()[0];
+    $('toggle-mic').classList.toggle('off', audio ? !audio.enabled : false);
+    $('toggle-mic').title = audio && !audio.enabled ? 'Unmute microphone' : 'Mute microphone';
+    $('toggle-cam').classList.toggle('off', video ? !video.enabled : false);
+    $('toggle-cam').title = video && !video.enabled ? 'Turn camera on' : 'Turn camera off';
+  }
+
+  $('toggle-mic').addEventListener('click', () => {
+    const t = localStream?.getAudioTracks()[0];
+    if (t) t.enabled = !t.enabled;
+    syncToggleButtons();
+  });
+  $('toggle-cam').addEventListener('click', () => {
+    const t = localStream?.getVideoTracks()[0];
+    if (t) t.enabled = !t.enabled;
+    syncToggleButtons();
+  });
+  $('toggle-chat').addEventListener('click', () => {
+    const collapsed = $('chat-rail').classList.toggle('collapsed');
+    $('toggle-chat').classList.toggle('active', !collapsed);
+    $('toggle-chat').title = collapsed ? 'Show chat' : 'Hide chat';
+  });
+  $('leave').addEventListener('click', () => {
+    try {
+      if (pipWindow) pipWindow.close();
+      pc?.close();
+      ws.close();
+      localStream?.getTracks().forEach((t) => t.stop());
+      screenStream?.getTracks().forEach((t) => t.stop());
+    } finally {
+      location.href = '/';
+    }
+  });
+
+  // ---- Document Picture-in-Picture companion (Phase 4c) ----
+  let pipWindow = null;
+  const pipSupported = 'documentPictureInPicture' in window;
+  if (!pipSupported) {
+    $('popout').disabled = true;
+    $('popout').title = 'Pop-out needs Chrome or Edge (Document Picture-in-Picture).';
+  }
+
+  $('popout').addEventListener('click', async () => {
+    if (!pipSupported) return;
+    if (pipWindow) {
+      pipWindow.close();
+      return;
+    }
+    try {
+      pipWindow = await documentPictureInPicture.requestWindow({ width: 300, height: 420 });
+    } catch (err) {
+      notice(`Pop-out failed: ${err.message || err}`, 'warn', 5000);
+      return;
+    }
+    // Copy stylesheets — the PiP document doesn't inherit the page's CSS.
+    for (const sheet of document.styleSheets) {
+      try {
+        const css = [...sheet.cssRules].map((r) => r.cssText).join('\n');
+        const style = pipWindow.document.createElement('style');
+        style.textContent = css;
+        pipWindow.document.head.append(style);
+      } catch {
+        if (sheet.href) {
+          const link = pipWindow.document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = sheet.href;
+          pipWindow.document.head.append(link);
+        }
+      }
+    }
+    pipWindow.document.body.className = 'pip-body';
+    // Move the partner cam + chat into the PiP window.
+    pipWindow.document.body.append(elRemote, elMessages, elSendForm);
+    $('popout').classList.add('active');
+    $('popout').title = 'Close pop-out';
+    tryPlay(elRemote);
+    pipWindow.addEventListener('pagehide', restoreFromPip);
+  });
+
+  function restoreFromPip() {
+    if (!pipWindow) return;
+    // Put the moved nodes back in their original places.
+    $('cam-tiles').prepend(elRemote);
+    $('chat-rail').append(elMessages, elSendForm);
+    $('popout').classList.remove('active');
+    $('popout').title = 'Pop partner cam + chat into a floating window';
+    tryPlay(elRemote);
+    pipWindow = null;
+  }
+
   // ---- Autoplay recovery ----
-  // Autoplay with audio can be blocked when the page was opened without a user
-  // gesture (the watcher just clicked a link elsewhere). Fail loudly: show a
-  // button instead of a silently frozen video.
   async function tryPlay(video) {
     try {
       await video.play();
@@ -852,15 +1035,14 @@ function enterRoom(roomId) {
       $('tap-to-play').hidden = false;
     }
   }
-
   $('tap-to-play').addEventListener('click', () => {
-    tryPlay($('remote-video'));
+    tryPlay(elRemote);
     if (!$('screen-video').hidden) tryPlay($('screen-video'));
     if (player?.el) tryPlay(player.el);
   });
 
   // ---- Chat ----
-  $('send-form').addEventListener('submit', (e) => {
+  elSendForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const input = $('send-input');
     const text = input.value.trim();
@@ -876,20 +1058,16 @@ function enterRoom(roomId) {
     const label = document.createElement('strong');
     label.textContent = `${who}: `;
     div.append(label, document.createTextNode(text));
-    $('messages').append(div);
-    $('messages').scrollTop = $('messages').scrollHeight;
+    elMessages.append(div);
+    elMessages.scrollTop = elMessages.scrollHeight;
   }
 
   // Dev/debug handle (also used by automated smoke tests).
   window.__cowatch = {
-    get pc() {
-      return pc;
-    },
-    get player() {
-      return player;
-    },
-    get mode() {
-      return mode;
-    },
+    get pc() { return pc; },
+    get player() { return player; },
+    get mode() { return mode; },
+    get sourceMode() { return sourceMode; },
+    get pipWindow() { return pipWindow; },
   };
 }

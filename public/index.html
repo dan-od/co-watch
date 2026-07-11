@@ -4,86 +4,137 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CoWatch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <!-- Landing view -->
   <section id="landing" hidden>
-    <h1>CoWatch</h1>
+    <h1 class="wordmark">COWATCH</h1>
     <p>Watch something together. Create a room and send the link to one other person.</p>
-    <button id="create-room">Create room</button>
+    <button id="create-room" class="primary">Create room</button>
   </section>
 
-  <!-- Room view -->
+  <!-- Room view: one fixed window — top bar / stage / control bar -->
   <section id="room" hidden>
-    <header>
-      <h1>CoWatch</h1>
-      <div id="room-link-row">
-        <input id="room-link" readonly>
-        <button id="copy-link">Copy link</button>
+
+    <header id="topbar">
+      <div class="topbar-left">
+        <span class="wordmark">COWATCH</span>
+        <span id="status-wrap"><span id="status-dot"></span><span id="status">Connecting…</span></span>
+      </div>
+
+      <nav id="mode-tabs">
+        <button id="mode-screen" class="tab active">Share</button>
+        <button id="mode-sync" class="tab">Sync</button>
+      </nav>
+
+      <div class="topbar-right">
+        <input id="room-link" readonly title="Room link">
+        <button id="copy-link" class="ghost">Copy</button>
+        <button id="settings-btn" class="icon-btn" title="TorBox settings" aria-label="TorBox settings">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+
+      <!-- TorBox settings popover -->
+      <div id="settings-panel" hidden>
+        <h3>TorBox settings</h3>
+        <label for="torbox-key">API key</label>
+        <div class="key-row">
+          <input id="torbox-key" type="password" placeholder="Paste your TorBox API key" autocomplete="off">
+          <button id="torbox-save" class="ghost">Save</button>
+        </div>
+        <p id="torbox-key-status" class="key-status"></p>
+        <p class="hint">Get your API key from torbox.app/dashboard. It is stored only in this browser
+          and sent per-request through this room's server (never stored there).</p>
       </div>
     </header>
 
-    <p id="status" class="status">Connecting…</p>
-
-    <div id="media-error" hidden>
-      <p id="media-error-text"></p>
-      <button id="retry-media">Try again</button>
-    </div>
-
-    <button id="tap-to-play" hidden>Click to start video &amp; sound</button>
-
-    <div id="layout">
-      <div id="main-col">
-        <div id="mode-bar">
-          <button id="mode-screen" class="mode active">Share my screen</button>
-          <button id="mode-sync" class="mode">Watch together (sync)</button>
-        </div>
-
+    <div id="stage">
+      <div id="stage-main">
         <!-- Mode A: screen share -->
         <div id="screen-pane">
           <video id="screen-video" autoplay playsinline hidden></video>
-          <div id="main-placeholder">
-            <p>Nothing playing yet.<br>Share your screen, or switch to <strong>Watch together (sync)</strong> and paste a video link.</p>
+          <div id="share-placeholder" class="placeholder">
+            <p>Nothing shared yet.<br>Pick the <strong>tab</strong> playing the video — not your whole screen.</p>
           </div>
-          <div id="controls">
-            <button id="share-screen" disabled title="Available once your friend joins">Share screen</button>
-            <button id="pip-partner" hidden title="Pop your friend's camera into a floating window">Pop partner cam out</button>
-          </div>
-          <p id="share-info" class="hint" hidden></p>
-          <p class="hint">Tip: share the browser <strong>tab</strong> that's playing the video (not the whole
-            screen) — it's smoother, can carry tab audio, and keeps the rest of your screen private.</p>
         </div>
 
         <!-- Mode B: sync playback -->
         <div id="sync-pane" hidden>
-          <form id="sync-form">
-            <input id="sync-input" placeholder="Paste a YouTube / Vimeo / .mp4 URL, magnet link, or torrent hash" autocomplete="off">
-            <button type="submit">Load</button>
-            <button type="button" id="resync" disabled title="Push your current position to your friend">Resync</button>
-          </form>
-          <p id="sync-status" class="hint"></p>
           <div id="sync-player"></div>
-          <details id="torbox-settings">
-            <summary>TorBox settings (optional — for magnet links)</summary>
-            <label for="torbox-key">API key</label>
-            <input id="torbox-key" type="password" placeholder="Stored only in this browser" autocomplete="off">
-            <p class="hint">Each person uses their own key. Your key never leaves this browser except to call
-              TorBox through this room's server.</p>
-          </details>
+          <div id="sync-placeholder" class="placeholder">
+            <p>Paste a YouTube, Vimeo, or direct video link below —<br>or flip to TorBox for magnets.</p>
+          </div>
+        </div>
+
+        <!-- Camera tiles: partner ringed amber, you dimmer -->
+        <div id="cam-tiles">
+          <video id="remote-video" class="cam partner" autoplay playsinline></video>
+          <video id="local-video" class="cam me" autoplay playsinline muted></video>
+        </div>
+
+        <p id="notice" class="notice" hidden></p>
+        <button id="tap-to-play" hidden>Click to start video &amp; sound</button>
+
+        <div id="media-error" hidden>
+          <p id="media-error-text"></p>
+          <button id="retry-media" class="primary">Try again</button>
         </div>
       </div>
 
-      <aside id="side-col">
-        <video id="remote-video" autoplay playsinline></video>
-        <video id="local-video" autoplay playsinline muted></video>
+      <aside id="chat-rail">
         <div id="messages" aria-live="polite"></div>
         <form id="send-form">
-          <input id="send-input" placeholder="Type a message…" autocomplete="off">
-          <button type="submit">Send</button>
+          <input id="send-input" placeholder="Message…" autocomplete="off">
+          <button type="submit" class="ghost">Send</button>
         </form>
       </aside>
     </div>
+
+    <footer id="controlbar">
+      <!-- Mode-specific action area -->
+      <div id="action-share" class="action-area">
+        <button id="share-screen" class="primary" disabled title="Available once your friend joins">Share a tab</button>
+        <span class="hint">Pick the tab playing the video — not your whole screen.</span>
+      </div>
+
+      <div id="action-sync" class="action-area" hidden>
+        <div id="source-toggle" role="group" aria-label="Source type">
+          <button id="source-url" class="seg active">URL</button>
+          <button id="source-torbox" class="seg">TorBox</button>
+        </div>
+        <form id="sync-form">
+          <input id="sync-input" placeholder="YouTube / Vimeo / .mp4 URL" autocomplete="off">
+          <select id="file-select" hidden title="Pick a file from the torrent"></select>
+          <button id="sync-load" type="submit" class="primary">Load</button>
+          <button type="button" id="resync" class="ghost" disabled title="Push your current position to your friend">Resync</button>
+          <span id="sync-spinner" class="spinner" hidden></span>
+        </form>
+      </div>
+
+      <!-- Control cluster -->
+      <div id="cluster">
+        <button id="popout" class="icon-btn" title="Pop partner cam + chat into a floating window">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="14" rx="1"/><rect x="12" y="10" width="8" height="6" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <button id="toggle-mic" class="icon-btn" title="Mute microphone">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg>
+        </button>
+        <button id="toggle-cam" class="icon-btn" title="Turn camera off">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="13" height="12" rx="1"/><path d="M15 10l7-4v12l-7-4"/></svg>
+        </button>
+        <button id="toggle-chat" class="icon-btn active" title="Hide chat">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </button>
+        <button id="leave" class="icon-btn danger" title="Leave room">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        </button>
+      </div>
+    </footer>
   </section>
 
   <script src="/app.js"></script>
