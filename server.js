@@ -52,12 +52,97 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
+// --- TorBox proxy ------------------------------------------------------------
+// api.torbox.app is not CORS-enabled for browsers, so the client posts to these
+// endpoints and the server forwards the call. The user's API key is passed
+// through per request and never stored or logged. Only these three fixed
+// TorBox endpoints are reachable — this is not a general proxy.
+
+const TORBOX_API = 'https://api.torbox.app/v1/api';
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', (chunk) => {
+      data += chunk;
+      if (data.length > 64 * 1024) reject(new Error('body too large'));
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(data || '{}'));
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function sendJson(res, status, obj) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(obj));
+}
+
+async function handleTorbox(req, res, urlPath) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { success: false, detail: 'POST only' });
+    return;
+  }
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    sendJson(res, 400, { success: false, detail: 'invalid JSON body' });
+    return;
+  }
+  const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+  if (!apiKey) {
+    sendJson(res, 400, { success: false, detail: 'missing apiKey' });
+    return;
+  }
+  try {
+    let upstream;
+    if (urlPath === '/torbox/checkcached') {
+      upstream = await fetch(`${TORBOX_API}/torrents/checkcached?format=object&list_files=true`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hashes: Array.isArray(body.hashes) ? body.hashes : [] }),
+      });
+    } else if (urlPath === '/torbox/createtorrent') {
+      const form = new FormData();
+      form.set('magnet', String(body.magnet || ''));
+      upstream = await fetch(`${TORBOX_API}/torrents/createtorrent`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+      });
+    } else if (urlPath === '/torbox/requestdl') {
+      const q = new URLSearchParams({ token: apiKey, torrent_id: String(body.torrent_id ?? '') });
+      if (body.file_id != null) q.set('file_id', String(body.file_id));
+      upstream = await fetch(`${TORBOX_API}/torrents/requestdl?${q}`);
+    } else {
+      sendJson(res, 404, { success: false, detail: 'unknown torbox endpoint' });
+      return;
+    }
+    const text = await upstream.text();
+    res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
+    res.end(text);
+  } catch {
+    sendJson(res, 502, { success: false, detail: 'TorBox API unreachable from server' });
+  }
+}
+
 const server = http.createServer((req, res) => {
   const urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
 
   if (urlPath === '/ice-config') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(iceConfig()));
+    return;
+  }
+
+  if (urlPath.startsWith('/torbox/')) {
+    handleTorbox(req, res, urlPath);
     return;
   }
 

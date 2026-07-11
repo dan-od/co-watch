@@ -31,23 +31,59 @@
       <button id="retry-media">Try again</button>
     </div>
 
-    <div id="videos">
-      <video id="screen-video" autoplay playsinline hidden></video>
-      <video id="remote-video" autoplay playsinline></video>
-      <video id="local-video" autoplay playsinline muted></video>
-      <button id="tap-to-play" hidden>Click to start video &amp; sound</button>
-    </div>
+    <button id="tap-to-play" hidden>Click to start video &amp; sound</button>
 
-    <div id="controls">
-      <button id="share-screen" disabled title="Available once your friend joins">Share screen</button>
-    </div>
+    <div id="layout">
+      <div id="main-col">
+        <div id="mode-bar">
+          <button id="mode-screen" class="mode active">Share my screen</button>
+          <button id="mode-sync" class="mode">Watch together (sync)</button>
+        </div>
 
-    <!-- Phase 1 relay test: becomes the chat sidebar in P1 -->
-    <div id="messages" aria-live="polite"></div>
-    <form id="send-form">
-      <input id="send-input" placeholder="Type a message…" autocomplete="off">
-      <button type="submit">Send</button>
-    </form>
+        <!-- Mode A: screen share -->
+        <div id="screen-pane">
+          <video id="screen-video" autoplay playsinline hidden></video>
+          <div id="main-placeholder">
+            <p>Nothing playing yet.<br>Share your screen, or switch to <strong>Watch together (sync)</strong> and paste a video link.</p>
+          </div>
+          <div id="controls">
+            <button id="share-screen" disabled title="Available once your friend joins">Share screen</button>
+            <button id="pip-partner" hidden title="Pop your friend's camera into a floating window">Pop partner cam out</button>
+          </div>
+          <p id="share-info" class="hint" hidden></p>
+          <p class="hint">Tip: share the browser <strong>tab</strong> that's playing the video (not the whole
+            screen) — it's smoother, can carry tab audio, and keeps the rest of your screen private.</p>
+        </div>
+
+        <!-- Mode B: sync playback -->
+        <div id="sync-pane" hidden>
+          <form id="sync-form">
+            <input id="sync-input" placeholder="Paste a YouTube / Vimeo / .mp4 URL, magnet link, or torrent hash" autocomplete="off">
+            <button type="submit">Load</button>
+            <button type="button" id="resync" disabled title="Push your current position to your friend">Resync</button>
+          </form>
+          <p id="sync-status" class="hint"></p>
+          <div id="sync-player"></div>
+          <details id="torbox-settings">
+            <summary>TorBox settings (optional — for magnet links)</summary>
+            <label for="torbox-key">API key</label>
+            <input id="torbox-key" type="password" placeholder="Stored only in this browser" autocomplete="off">
+            <p class="hint">Each person uses their own key. Your key never leaves this browser except to call
+              TorBox through this room's server.</p>
+          </details>
+        </div>
+      </div>
+
+      <aside id="side-col">
+        <video id="remote-video" autoplay playsinline></video>
+        <video id="local-video" autoplay playsinline muted></video>
+        <div id="messages" aria-live="polite"></div>
+        <form id="send-form">
+          <input id="send-input" placeholder="Type a message…" autocomplete="off">
+          <button type="submit">Send</button>
+        </form>
+      </aside>
+    </div>
   </section>
 
   <script src="/app.js"></script>

@@ -11,17 +11,18 @@ body {
 }
 
 section {
-  width: min(640px, 100%);
-  padding: 2rem 1.25rem;
+  padding: 1.5rem 1.25rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
 
-h1 { margin: 0; font-size: 1.5rem; }
-
-#landing { justify-content: center; text-align: center; }
+#landing { width: min(640px, 100%); justify-content: center; text-align: center; }
 #landing p { color: #a0a3ab; }
+
+#room { width: min(1100px, 100%); }
+
+h1 { margin: 0; font-size: 1.5rem; }
 
 button {
   font: inherit;
@@ -33,14 +34,17 @@ button {
   cursor: pointer;
 }
 button:hover { background: #6089ff; }
+button:disabled { background: #33363e; color: #7d8089; cursor: default; }
 
 #create-room { align-self: center; font-size: 1.1rem; }
 
-#room-link-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+header { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; }
+#room-link-row { display: flex; gap: 0.5rem; flex: 1; min-width: 260px; }
 
 input {
   font: inherit;
   flex: 1;
+  min-width: 0;
   padding: 0.55rem 0.75rem;
   border: 1px solid #33363e;
   border-radius: 8px;
@@ -53,6 +57,11 @@ input {
 .status.warn { color: #e6b95c; }
 .status.error { color: #ef7070; }
 
+.hint { color: #7d8089; font-size: 0.85rem; margin: 0; }
+.hint.ok { color: #5dd18a; }
+.hint.warn { color: #e6b95c; }
+.hint.error { color: #ef7070; }
+
 #media-error {
   border: 1px solid #6e3a3a;
   background: #2a1d1d;
@@ -64,75 +73,117 @@ input {
 }
 #media-error p { margin: 0; color: #ef9a9a; flex: 1; }
 
-#videos { position: relative; }
+#tap-to-play { background: #7a5c16; }
+#tap-to-play:hover { background: #94711f; }
 
-#screen-video {
+/* ---- Two-column room layout: main pane + sidebar ---- */
+#layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 1rem;
+  align-items: start;
+}
+
+#main-col { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+
+#mode-bar { display: flex; gap: 0.5rem; }
+button.mode {
+  background: #1d2026;
+  border: 1px solid #33363e;
+  color: #a0a3ab;
+}
+button.mode:hover { background: #262a31; }
+button.mode.active { background: #4f7cff; border-color: #4f7cff; color: #fff; }
+
+#screen-pane, #sync-pane { display: flex; flex-direction: column; gap: 0.75rem; }
+
+#screen-video,
+#main-placeholder,
+#sync-player {
   width: 100%;
   aspect-ratio: 16 / 9;
   background: #000;
   border-radius: 10px;
-  display: block;
 }
 
-/* While a screen is shared it is the main pane; both cameras shrink to tiles. */
-#videos.screen-active #remote-video {
+#main-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #7d8089;
+  background: #1a1d22;
+  border: 1px dashed #33363e;
+  padding: 1rem;
+}
+
+#screen-video { display: block; }
+
+#sync-player { position: relative; overflow: hidden; }
+#sync-player iframe,
+#sync-player video,
+#sync-player > div {
   position: absolute;
-  left: 0.75rem;
-  bottom: 0.75rem;
-  width: 20%;
-  aspect-ratio: auto;
-  border-radius: 8px;
-  border: 1px solid #33363e;
-}
-
-#videos.screen-active #local-video { width: 20%; }
-
-#controls { display: flex; gap: 0.5rem; }
-button:disabled { background: #33363e; color: #7d8089; cursor: default; }
-
-#remote-video {
+  inset: 0;
   width: 100%;
-  aspect-ratio: 16 / 9;
-  background: #000;
-  border-radius: 10px;
-  display: block;
+  height: 100%;
+  border: 0;
 }
 
-#local-video {
-  position: absolute;
-  right: 0.75rem;
-  bottom: 0.75rem;
-  width: 25%;
+#controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+#sync-form { display: flex; gap: 0.5rem; }
+
+#torbox-settings {
+  border: 1px solid #33363e;
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+#torbox-settings summary { cursor: pointer; color: #a0a3ab; }
+#torbox-settings label { color: #a0a3ab; font-size: 0.85rem; }
+#torbox-settings input { width: 100%; }
+
+/* ---- Sidebar: camera tiles + chat ---- */
+#side-col { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+
+#side-col video {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #000;
   border-radius: 8px;
   border: 1px solid #33363e;
-  background: #000;
-  transform: scaleX(-1); /* mirror self-view only */
+  display: block;
+  object-fit: cover;
 }
-
-#tap-to-play {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 1.05rem;
-}
+#local-video { transform: scaleX(-1); } /* mirror self-view only */
 
 #messages {
-  flex: 1;
-  min-height: 120px;
-  max-height: 30vh;
+  min-height: 140px;
+  max-height: 32vh;
   overflow-y: auto;
   border: 1px solid #33363e;
   border-radius: 8px;
   background: #1a1d22;
-  padding: 0.75rem;
+  padding: 0.6rem;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
 }
 
-.msg { padding: 0.35rem 0.6rem; border-radius: 6px; max-width: 85%; }
+.msg { padding: 0.3rem 0.55rem; border-radius: 6px; max-width: 90%; font-size: 0.9rem; }
 .msg.mine { background: #2b3a5e; align-self: flex-end; }
 .msg.theirs { background: #262a31; align-self: flex-start; }
 
 #send-form { display: flex; gap: 0.5rem; }
+#send-form button { padding: 0.55rem 0.8rem; }
+
+@media (max-width: 820px) {
+  #layout { grid-template-columns: 1fr; }
+  #side-col { flex-direction: row; flex-wrap: wrap; }
+  #side-col video { width: calc(50% - 0.25rem); }
+  #messages { width: 100%; min-height: 100px; }
+  #send-form { width: 100%; }
+}

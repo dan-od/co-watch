@@ -176,3 +176,37 @@ There is **no browser-extension distribution and no app-store submission** — i
 - **Test in Chrome first**, then verify Firefox. Test Phase 2+ across two real devices, not just two tabs on one machine (NAT behavior differs).
 - **Don't try to work around DRM.** If a shared streaming tab shows black, that's expected — document it, don't fight it.
 - **Keep the signaling server dumb.** It relays and matches; it holds no media and minimal state.
+
+---
+
+## 16. Phase 4 revision — screen-share tuning (4a) + Sync mode (4b)
+
+*(Replaces the original Phase 4. Existing camera/chat/screen-share behavior must keep working.)*
+
+### Phase 4a — screen-share tuning (Mode A)
+
+1. Set `contentHint = 'motion'` on the screen video track.
+2. Cap the screen sender's `maxBitrate` via `RTCRtpSender` encoding parameters — start at 2.5 Mbps, easy to adjust.
+3. Cap `getDisplayMedia` constraints to 1080p / 30 fps max.
+4. UI guidance to share the **video tab**, not the whole screen, plus an indicator of what is currently being shared.
+5. Picture-in-Picture: while sharing, the sharer can pop the **partner's camera** into a floating PiP window (Picture-in-Picture API) so it hovers over fullscreen content without entering the shared capture (true for tab/window shares; a monitor share inherently captures it).
+
+### Phase 4b — Sync mode (Mode B)
+
+Mode toggle: **"Share my screen"** vs **"Watch together (sync)"**. Sync mode takes a pasted URL / magnet / info-hash:
+
+- **YouTube** → IFrame Player API (`playVideo`/`pauseVideo`/`seekTo`, `onStateChange`).
+- **Vimeo** → Vimeo Player SDK.
+- **Direct `.mp4`/`.webm`/`.m3u8`** → our own `<video>` element.
+- **TorBox** (magnet `magnet:?xt=urn:btih:…` or 40-char hex hash):
+  - Per-user API key, stored in `localStorage` only.
+  - `POST /v1/api/torrents/checkcached` (hashes list) → cached? file list; `createtorrent` to add; `GET /v1/api/torrents/requestdl?torrent_id=…` → direct URL, played in native `<video>`.
+  - Resolved URL is shared to the peer; if the peer has their own key they resolve the magnet themselves (handles IP-locked links).
+  - Errors: IP-locked/expired → "This link requires your own TorBox account — paste the same link in your app to sync." Not cached → "Not cached — TorBox will download it first. Check back later." No key → "Enter your TorBox API key to resolve magnets."
+- **Anything else** → "Sync mode supports YouTube, Vimeo, direct video links, and TorBox magnets. For anything else, use Share screen instead."
+
+**Sync protocol** over the existing WebSocket: `{type:'sync', action:'play'|'pause'|'seek', time, rate}` — symmetric (whoever acts broadcasts, the other follows), with echo suppression so applying a received event doesn't re-broadcast. Include a **Resync** button.
+
+**Layout:** video main pane; camera tiles + chat in a sidebar.
+
+**Acceptance tests:** YouTube play/pause/seek sync within ~500 ms; direct mp4 syncs; TorBox cached magnet resolves and syncs; uncached shows downloading status; IP-locked shows own-account message; unsupported URL shows the message without crashing; 4a: smoother framerate on constrained uplink, PiP camera absent from the shared feed (tab/window shares).

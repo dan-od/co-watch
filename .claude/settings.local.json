@@ -11,7 +11,9 @@
       "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); $c = Get-Command cloudflared -ErrorAction SilentlyContinue; if \\($c\\) { \"FOUND: $\\($c.Source\\)\"; cloudflared --version } else { \"STILL NOT ON PATH\" })",
       "PowerShell($t = Test-NetConnection -ComputerName localhost -Port 8080 -WarningAction SilentlyContinue; \"TcpTestSucceeded: $\\($t.TcpTestSucceeded\\)\")",
       "PowerShell(Invoke-RestMethod http://localhost:8080/ice-config)",
-      "PowerShell(\\(Invoke-RestMethod http://localhost:8080/ice-config\\).forceRelay; git status --short)"
+      "PowerShell(\\(Invoke-RestMethod http://localhost:8080/ice-config\\).forceRelay; git status --short)",
+      "PowerShell(git commit -F \"C:\\\\Users\\\\danie\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-danie-Desktop-Codes-CoWatch\\\\d9d96a9d-e2bb-4457-ba9d-9069cf79af04\\\\scratchpad\\\\commit-msg.txt\")",
+      "PowerShell(node --version; try { $r = Invoke-WebRequest -Uri \"https://api.torbox.app/v1/api/torrents/checkcached?hash=0000000000000000000000000000000000000000\" -Headers @{Authorization=\"Bearer probe-invalid\"} -UseBasicParsing -TimeoutSec 15 } catch { $_.Exception.Response.StatusCode.value__; $reader = New-Object IO.StreamReader\\($_.Exception.Response.GetResponseStream\\(\\)\\); $reader.ReadToEnd\\(\\).Substring\\(0, [Math]::Min\\(300, 1000\\)\\) })"
     ]
   }
 }
