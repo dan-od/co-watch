@@ -133,6 +133,20 @@ metadata + files), `/torbox/load` (file → stream URL). The raw Phase-4b
 pass-throughs (`/torbox/checkcached`, `/createtorrent`, `/requestdl`) remain for
 compatibility.
 
+## In-call polish (Phase 6)
+
+- **Swap view** — the `⇄` button on the partner tile promotes their camera to
+  the main pane; the shared/synced content shrinks to a corner tile. A stage
+  label swaps back. This is **local only** — each person controls their own
+  view; nothing is synced to the peer.
+- **Emoji reactions** — the ❤️ 😂 😮 😢 😡 🎉 bar in the control bar sends a
+  reaction over the signaling socket; it animates up and fades on both
+  screens. Rate-limited to one per second per person.
+- **Push-to-talk** — the **PTT** button toggles push-to-talk. While on, your
+  mic is muted until you hold **Space** (or the **Hold to talk** button on
+  touch/mobile); the mic icon glows green and a "Speaking…" indicator shows.
+  Turning PTT off restores the normal mute toggle.
+
 ## Robustness (Phase 5)
 
 - **Heartbeat:** the server pings every WebSocket every 25 s (`HEARTBEAT_MS`
@@ -177,4 +191,5 @@ compatibility.
 - [x] Phase 4c — single-window restyle, Document PiP companion, TorBox UI
 - [x] Phase 4e — metadata search & watchlist (TMDb; metadata only — no content discovery)
 - [x] Phase 5 — robustness (heartbeat, auto-reconnect, ICE restart, network indicator, connection log)
+- [x] Phase 6 — polish (swap-view, emoji reactions, push-to-talk)
 - [ ] Phase 6 — polish (chat, screen audio, swap view)

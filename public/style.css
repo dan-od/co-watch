@@ -340,7 +340,103 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   transform: scaleX(-1);
 }
 
-#self-wrap { position: relative; }
+#self-wrap, #partner-wrap { position: relative; }
+
+#swap-view {
+  position: absolute;
+  top: 2px; right: 2px;
+  width: 22px; height: 22px;
+  padding: 0;
+  font-size: 13px; line-height: 1;
+  background: rgba(20, 17, 9, 0.75);
+  border: 1px solid var(--hairline);
+  color: var(--dim);
+}
+#swap-view:hover { color: var(--text); border-color: var(--accent); }
+
+/* ---- Swap view (Phase 6a): partner cam fills the stage, content shrinks ---- */
+.main-cam {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: contain;
+  background: #000;
+  border: none;
+  z-index: 4;
+}
+#stage-main.swapped #screen-pane:not([hidden]),
+#stage-main.swapped #sync-pane:not([hidden]) {
+  inset: auto 10px 10px auto; /* bottom-right tile */
+  width: 240px; height: 135px;
+  z-index: 11;
+  border: 1px solid var(--accent);
+  overflow: hidden;
+  background: #000;
+}
+#stage-main.swapped #cam-tiles { right: 266px; } /* clear the content tile */
+#stage-main.swapped .placeholder { padding: 0.3rem; }
+#stage-main.swapped .placeholder p { font-size: 0.6rem; line-height: 1.3; }
+
+#stage-label {
+  position: absolute;
+  top: 10px; right: 10px;
+  z-index: 12;
+  background: rgba(20, 17, 9, 0.88);
+  border: 1px solid var(--hairline);
+  color: var(--dim);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+}
+#stage-label:hover { color: var(--text); border-color: var(--accent); }
+
+/* ---- Emoji reactions (Phase 6b) ---- */
+#reactions-layer {
+  position: absolute; inset: 0;
+  z-index: 16;
+  pointer-events: none;
+  overflow: hidden;
+}
+.reaction {
+  position: absolute;
+  bottom: 18%;
+  font-size: 64px;
+  animation: reaction-float 2s ease-out forwards;
+}
+@keyframes reaction-float {
+  0% { opacity: 0; transform: translateY(24px) scale(0.6); }
+  15% { opacity: 1; transform: translateY(0) scale(1.15); }
+  30% { transform: translateY(-24px) scale(1); }
+  100% { opacity: 0; transform: translateY(-150px) scale(1); }
+}
+#reaction-bar { display: flex; gap: 2px; flex: none; }
+#reaction-bar button {
+  width: 34px; height: 34px;
+  padding: 0;
+  font-size: 17px; line-height: 1;
+  background: transparent;
+  border-color: transparent;
+}
+#reaction-bar button:hover { border-color: var(--accent); background: var(--panel-2); }
+
+/* ---- Push-to-talk (Phase 6c) ---- */
+#ptt { width: auto; padding: 0 0.6rem; font-size: 0.8rem; letter-spacing: 0.05em; }
+#ptt-hold { display: none; padding: 0.35rem 0.7rem; font-size: 0.85rem; }
+#ptt-hold.visible { display: inline-flex; }
+.icon-btn.speaking, #ptt-hold.speaking {
+  color: var(--ok);
+  border-color: var(--ok);
+  box-shadow: 0 0 8px rgba(157, 180, 119, 0.7);
+}
+#ptt-indicator {
+  position: absolute;
+  bottom: 10px; left: 10px;
+  z-index: 16;
+  margin: 0;
+  background: rgba(20, 17, 9, 0.88);
+  border: 1px solid var(--ok);
+  color: var(--ok);
+  font-size: 0.8rem;
+  padding: 0.3rem 0.6rem;
+}
 #toggle-self {
   position: absolute;
   top: 2px; right: 2px;
@@ -514,6 +610,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   #room-link { width: 90px; }
   .cam { width: 96px; }
   .cam.me { width: 48px; }
+  #reaction-bar { display: none; }
   #mode-tabs { gap: 0.75rem; }
   .action-area .hint { display: none; }
 }

@@ -101,13 +101,19 @@
 
         <!-- Camera tiles: partner primary; self a small toggleable thumbnail -->
         <div id="cam-tiles">
-          <video id="remote-video" class="cam partner" autoplay playsinline></video>
+          <div id="partner-wrap">
+            <video id="remote-video" class="cam partner" autoplay playsinline></video>
+            <button id="swap-view" title="Swap: show this camera as the main view" aria-label="Swap view">⇄</button>
+          </div>
           <div id="self-wrap">
             <video id="local-video" class="cam me" autoplay playsinline muted></video>
             <button id="toggle-self" title="Hide self-view" aria-label="Hide self-view">×</button>
           </div>
         </div>
 
+        <div id="reactions-layer" aria-hidden="true"></div>
+        <button id="stage-label" hidden></button>
+        <p id="ptt-indicator" hidden>🎙 Speaking…</p>
         <p id="notice" class="notice" hidden></p>
         <button id="tap-to-play" hidden>Click to start video &amp; sound</button>
 
@@ -148,8 +154,20 @@
         </form>
       </div>
 
+      <!-- Emoji reactions (Phase 6b) -->
+      <div id="reaction-bar" aria-label="Send a reaction">
+        <button data-emoji="❤️" title="Send ❤️">❤️</button>
+        <button data-emoji="😂" title="Send 😂">😂</button>
+        <button data-emoji="😮" title="Send 😮">😮</button>
+        <button data-emoji="😢" title="Send 😢">😢</button>
+        <button data-emoji="😡" title="Send 😡">😡</button>
+        <button data-emoji="🎉" title="Send 🎉">🎉</button>
+      </div>
+
       <!-- Control cluster -->
       <div id="cluster">
+        <button id="ptt-hold" title="Hold to speak">Hold to talk</button>
+        <button id="ptt" class="icon-btn" title="Enable push-to-talk">PTT</button>
         <button id="popout" class="icon-btn" title="Pop partner cam + chat into a floating window">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="14" rx="1"/><rect x="12" y="10" width="8" height="6" fill="currentColor" stroke="none"/></svg>
         </button>

@@ -465,6 +465,9 @@ function enterRoom(roomId) {
       case 'sync':
         await applyRemoteSync(msg);
         break;
+      case 'reaction':
+        showReaction(msg.emoji); // validated against the preset list inside
+        break;
       case 'chat':
         appendMessage('Them', msg.text);
         break;
@@ -479,6 +482,7 @@ function enterRoom(roomId) {
     try {
       localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       $('local-video').srcObject = localStream;
+      if (pttOn) setMicEnabled(pttSpeaking); // a re-acquired mic honors PTT state
       syncToggleButtons();
       addLocalTracks();
     } catch (err) {
@@ -625,6 +629,7 @@ function enterRoom(roomId) {
       pc = null;
     }
     stopScreenShare();
+    setSwapped(false); // a dead partner cam shouldn't own the stage
     remoteScreenStreamId = null;
     clearScreen();
     updateShareButton();
@@ -1459,6 +1464,122 @@ function enterRoom(roomId) {
     );
   }
 
+  // ---- Swap view (Phase 6a) ----
+  // Local-only: each person picks what fills their own stage. Promotes the
+  // partner's camera to the main pane; the content pane shrinks to a corner
+  // tile (pure CSS via .swapped — the panes keep working untouched).
+  let swapped = false;
+
+  function setSwapped(on) {
+    if (swapped === on) return;
+    if (on && pipWindow) return; // partner cam currently lives in the pop-out
+    swapped = on;
+    $('stage-main').classList.toggle('swapped', on);
+    if (on) {
+      elRemote.classList.add('main-cam');
+      $('stage-main').append(elRemote);
+      $('stage-label').textContent = "Showing: partner's camera — click to show shared content";
+      $('stage-label').hidden = false;
+    } else {
+      elRemote.classList.remove('main-cam');
+      $('partner-wrap').prepend(elRemote);
+      $('stage-label').hidden = true;
+    }
+    tryPlay(elRemote);
+  }
+
+  $('swap-view').addEventListener('click', () => setSwapped(true));
+  $('stage-label').addEventListener('click', () => setSwapped(false));
+
+  // ---- Emoji reactions (Phase 6b) ----
+  const REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '🎉'];
+  let lastReactionAt = 0;
+
+  for (const btn of document.querySelectorAll('#reaction-bar button')) {
+    btn.addEventListener('click', () => {
+      const now = Date.now();
+      if (now - lastReactionAt < 1000) return; // max 1/s
+      lastReactionAt = now;
+      signal({ type: 'reaction', emoji: btn.dataset.emoji });
+      showReaction(btn.dataset.emoji);
+    });
+  }
+
+  function showReaction(emoji) {
+    if (!REACTIONS.includes(emoji)) return; // preset emojis only
+    const el = document.createElement('span');
+    el.className = 'reaction';
+    el.textContent = emoji;
+    el.style.left = `${25 + Math.random() * 50}%`; // slight offset so repeats stack
+    $('reactions-layer').append(el);
+    setTimeout(() => el.remove(), 2100);
+  }
+
+  // ---- Push-to-talk (Phase 6c) ----
+  // PTT on: mic muted unless Space (or the Hold-to-talk button) is held.
+  // PTT off: the normal mute toggle rules the mic.
+  let pttOn = false;
+  let pttSpeaking = false;
+
+  function setMicEnabled(on) {
+    const t = localStream?.getAudioTracks()[0];
+    if (t) t.enabled = on;
+  }
+
+  function setPtt(on) {
+    pttOn = on;
+    pttSpeaking = false;
+    $('ptt').classList.toggle('active', on);
+    $('ptt').title = on
+      ? 'Push-to-talk on — hold Space or the Hold-to-talk button to speak'
+      : 'Enable push-to-talk';
+    $('ptt-hold').classList.toggle('visible', on);
+    $('toggle-mic').disabled = on;
+    setMicEnabled(!on); // on -> muted until held; off -> back to open mic
+    updateSpeakingUi();
+    syncToggleButtons();
+  }
+
+  function setSpeaking(on) {
+    if (!pttOn || pttSpeaking === on) return;
+    pttSpeaking = on;
+    setMicEnabled(on);
+    updateSpeakingUi();
+    syncToggleButtons();
+  }
+
+  function updateSpeakingUi() {
+    $('ptt').classList.toggle('speaking', pttSpeaking);
+    $('ptt-hold').classList.toggle('speaking', pttSpeaking);
+    $('ptt-indicator').hidden = !pttSpeaking;
+  }
+
+  $('ptt').addEventListener('click', () => setPtt(!pttOn));
+
+  const holdBtn = $('ptt-hold');
+  holdBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    setSpeaking(true);
+  });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) {
+    holdBtn.addEventListener(ev, () => setSpeaking(false));
+  }
+
+  const isTypingTarget = (el) =>
+    el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+
+  window.addEventListener('keydown', (e) => {
+    if (!pttOn || e.code !== 'Space' || e.repeat || isTypingTarget(e.target)) return;
+    e.preventDefault(); // don't scroll or trigger the focused button
+    setSpeaking(true);
+  });
+  window.addEventListener('keyup', (e) => {
+    if (!pttOn || e.code !== 'Space') return;
+    if (!isTypingTarget(e.target)) e.preventDefault();
+    setSpeaking(false);
+  });
+  window.addEventListener('blur', () => setSpeaking(false)); // don't strand an open mic
+
   // ---- Control cluster: mic / cam / chat / leave ----
   function syncToggleButtons() {
     const audio = localStream?.getAudioTracks()[0];
@@ -1522,6 +1643,7 @@ function enterRoom(roomId) {
       pipWindow.close();
       return;
     }
+    setSwapped(false); // the partner cam is about to move into the pop-out
     try {
       pipWindow = await documentPictureInPicture.requestWindow({ width: 300, height: 420 });
     } catch (err) {
@@ -1556,7 +1678,7 @@ function enterRoom(roomId) {
   function restoreFromPip() {
     if (!pipWindow) return;
     // Put the moved nodes back in their original places.
-    $('cam-tiles').prepend(elRemote);
+    $('partner-wrap').prepend(elRemote);
     $('chat-rail').append(elMessages, elSendForm);
     $('popout').classList.remove('active');
     $('popout').title = 'Pop partner cam + chat into a floating window';
