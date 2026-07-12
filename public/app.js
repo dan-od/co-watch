@@ -297,6 +297,7 @@ function enterRoom(roomId) {
   let peerLeftGraceTimer = null; // peer-left may be a signaling blip; delay teardown
   let iceRestartTimer = null;
   let netSignaling = 'connecting'; // 'connecting' | 'connected' | 'reconnecting'
+  let shareBaton = 'free'; // 'free' | 'mine' | 'peer' — one active sharer, server-arbitrated
 
   // ---- Signaling socket with auto-reconnect (Phase 5) ----
   // The socket can idle out (Cloudflare tunnel) or drop on a network blip.
@@ -369,16 +370,27 @@ function enterRoom(roomId) {
         polite = peerPresent;
         clearTimeout(peerLeftGraceTimer);
         peerLeftGraceTimer = null;
+        if (msg.shareTaken) {
+          shareBaton = 'peer';
+          if (screenStream) stopScreenShare(); // peer took the baton while we were away
+        } else {
+          shareBaton = screenStream ? 'mine' : 'free';
+          if (screenStream) signal({ type: 'share-claim' }); // re-claim after a reconnect
+        }
         if (peerPresent) {
           setStatus(mode === 'sync' ? 'Synced' : 'Connected', 'ok');
           await ensureHealthyPc();
-          $('share-screen').disabled = false;
-        } else if (pc) {
-          // We reconnected first after a blip; the peer should rejoin shortly.
+        } else if (pc && pc.connectionState === 'connected') {
+          // We reconnected first after a blip and media is still up; the peer
+          // should rejoin shortly.
           setStatus('Waiting for your friend to reconnect…', 'warn');
         } else {
+          // Alone with a dead (or no) peer connection — clean up rather than
+          // leaving a zombie pc endlessly attempting ICE restarts.
+          if (pc) teardownPeerConnection();
           setStatus('Waiting for your friend…');
         }
+        updateShareButton();
         break;
       case 'peer-joined':
         peerPresent = true;
@@ -387,13 +399,14 @@ function enterRoom(roomId) {
         peerLeftGraceTimer = null;
         setStatus(mode === 'sync' ? 'Synced' : 'Connected', 'ok');
         await ensureHealthyPc();
-        $('share-screen').disabled = false;
+        updateShareButton();
         break;
       case 'peer-left':
         // Often just the peer's signaling socket blipping while P2P media keeps
         // flowing — give them a grace window before tearing anything down.
         peerPresent = false;
         setStatus('Your friend disconnected — waiting for them to return…', 'warn');
+        updateShareButton();
         clearTimeout(peerLeftGraceTimer);
         peerLeftGraceTimer = setTimeout(() => {
           peerLeftGraceTimer = null;
@@ -423,11 +436,41 @@ function enterRoom(roomId) {
       case 'screen-share':
         if (msg.on) {
           remoteScreenStreamId = msg.streamId;
+          shareBaton = 'peer'; // belt & braces alongside share-taken
+          updateShareButton();
           setMode('screen');
         } else {
           remoteScreenStreamId = null;
           clearScreen();
         }
+        break;
+      case 'share-granted':
+        shareBaton = 'mine';
+        updateShareButton();
+        // Not awaited: the picker can stay open for many seconds and must not
+        // block the inbox queue (ICE candidates, offers…).
+        startScreenShare().then(() => {
+          if (!screenStream) {
+            // Picker cancelled or capture failed — hand the baton back.
+            shareBaton = 'free';
+            signal({ type: 'share-release' });
+            updateShareButton();
+          }
+        });
+        break;
+      case 'share-denied':
+        shareBaton = 'peer';
+        notice('Your friend is already sharing.', 'warn', 4000);
+        updateShareButton();
+        break;
+      case 'share-taken':
+        shareBaton = 'peer';
+        if (screenStream) stopScreenShare(); // converge if both thought they held it
+        updateShareButton();
+        break;
+      case 'share-released':
+        if (shareBaton === 'peer') shareBaton = 'free';
+        updateShareButton();
         break;
       case 'sync-load':
         setMode('sync');
@@ -550,6 +593,13 @@ function enterRoom(roomId) {
       if (!pc) return;
       const st = pc.iceConnectionState;
       if (st !== 'disconnected' && st !== 'failed') return; // self-healed
+      if (!peerPresent) {
+        // No peer on the signaling side — an ICE restart has nobody to talk
+        // to. Tear down and wait for a rejoin instead of restarting forever.
+        teardownPeerConnection();
+        setStatus('Your friend left — waiting for them to rejoin…', 'warn');
+        return;
+      }
       setStatus('Restarting the media connection…', 'warn');
       try {
         pc.restartIce();
@@ -591,7 +641,7 @@ function enterRoom(roomId) {
     stopScreenShare();
     remoteScreenStreamId = null;
     clearScreen();
-    $('share-screen').disabled = true;
+    updateShareButton();
     elRemote.srcObject = null;
     $('tap-to-play').hidden = true;
     makingOffer = false;
@@ -621,9 +671,32 @@ function enterRoom(roomId) {
   $('mode-sync').addEventListener('click', () => setMode('sync'));
 
   // ---- Screen share (Mode A) ----
+  // Symmetric: either side may share, one at a time. Clicking Share claims the
+  // baton from the server; capture starts only on share-granted.
+  function updateShareButton() {
+    const btn = $('share-screen');
+    if (screenStream) {
+      btn.disabled = false;
+      btn.textContent = 'Stop sharing';
+      btn.title = '';
+    } else if (shareBaton === 'peer') {
+      btn.disabled = true;
+      btn.textContent = 'Partner is sharing';
+      btn.title = 'Only one person can share at a time';
+    } else {
+      btn.disabled = !peerPresent;
+      btn.textContent = 'Share a tab';
+      btn.title = peerPresent ? '' : 'Available once your friend joins';
+    }
+  }
+
   $('share-screen').addEventListener('click', () => {
-    if (screenStream) stopScreenShare();
-    else startScreenShare();
+    if (screenStream) {
+      stopScreenShare();
+      return;
+    }
+    if (shareBaton === 'peer' || !peerPresent) return;
+    signal({ type: 'share-claim' }); // reply arrives as share-granted / share-denied
   });
 
   async function startScreenShare() {
@@ -648,7 +721,7 @@ function enterRoom(roomId) {
     videoTrack.addEventListener('ended', stopScreenShare);
     showScreen(stream, true);
     showShareInfo(videoTrack);
-    $('share-screen').textContent = 'Stop sharing';
+    updateShareButton();
   }
 
   async function capSenderBitrate(sender, bps) {
@@ -686,8 +759,12 @@ function enterRoom(roomId) {
     screenSenders = [];
     for (const track of screenStream.getTracks()) track.stop();
     screenStream = null;
+    if (shareBaton === 'mine') {
+      shareBaton = 'free';
+      signal({ type: 'share-release' });
+    }
     clearScreen();
-    $('share-screen').textContent = 'Share a tab';
+    updateShareButton();
   }
 
   function showScreen(stream, mine) {
@@ -1132,6 +1209,14 @@ function enterRoom(roomId) {
     if (t) t.enabled = !t.enabled;
     syncToggleButtons();
   });
+  // Hide/show the self-view thumbnail (partner tile always stays).
+  $('toggle-self').addEventListener('click', () => {
+    const hidden = $('cam-tiles').classList.toggle('self-hidden');
+    $('toggle-self').textContent = hidden ? 'Self' : '×';
+    $('toggle-self').title = hidden ? 'Show self-view' : 'Hide self-view';
+    $('toggle-self').setAttribute('aria-label', $('toggle-self').title);
+  });
+
   $('toggle-chat').addEventListener('click', () => {
     const collapsed = $('chat-rail').classList.toggle('collapsed');
     $('toggle-chat').classList.toggle('active', !collapsed);
@@ -1252,5 +1337,7 @@ function enterRoom(roomId) {
     get mode() { return mode; },
     get sourceMode() { return sourceMode; },
     get pipWindow() { return pipWindow; },
+    get shareBaton() { return shareBaton; },
+    signal,
   };
 }

@@ -72,10 +72,13 @@
           </div>
         </div>
 
-        <!-- Camera tiles: partner ringed amber, you dimmer -->
+        <!-- Camera tiles: partner primary; self a small toggleable thumbnail -->
         <div id="cam-tiles">
           <video id="remote-video" class="cam partner" autoplay playsinline></video>
-          <video id="local-video" class="cam me" autoplay playsinline muted></video>
+          <div id="self-wrap">
+            <video id="local-video" class="cam me" autoplay playsinline muted></video>
+            <button id="toggle-self" title="Hide self-view" aria-label="Hide self-view">×</button>
+          </div>
         </div>
 
         <p id="notice" class="notice" hidden></p>

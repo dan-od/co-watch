@@ -226,13 +226,14 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .placeholder p { margin: 0; line-height: 1.6; }
 .placeholder strong { color: var(--accent); }
 
-/* Camera tiles: square corners; partner ringed amber, you dimmer */
+/* Camera tiles: square corners; partner primary, self a small thumbnail */
 #cam-tiles {
   position: absolute;
   right: 10px; bottom: 10px;
   z-index: 10;
   display: flex;
-  gap: 8px;
+  align-items: flex-end;
+  gap: 6px;
 }
 .cam {
   width: 148px;
@@ -243,7 +244,32 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   display: block;
 }
 .cam.partner { border: 2px solid var(--accent); }
-.cam.me { border: 1px solid var(--hairline); opacity: 0.75; transform: scaleX(-1); }
+.cam.me {
+  width: 74px; /* ~half the partner tile */
+  border: 1px solid var(--hairline);
+  opacity: 0.75;
+  transform: scaleX(-1);
+}
+
+#self-wrap { position: relative; }
+#toggle-self {
+  position: absolute;
+  top: 2px; right: 2px;
+  width: 18px; height: 18px;
+  padding: 0;
+  font-size: 12px; line-height: 1;
+  background: rgba(20, 17, 9, 0.75);
+  border: 1px solid var(--hairline);
+  color: var(--dim);
+}
+#toggle-self:hover { color: var(--text); border-color: var(--accent); }
+#cam-tiles.self-hidden #local-video { display: none; }
+#cam-tiles.self-hidden #toggle-self {
+  position: static;
+  width: auto; height: auto;
+  padding: 3px 7px;
+  font-size: 11px;
+}
 
 .notice {
   position: absolute;
@@ -398,6 +424,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   }
   #room-link { width: 90px; }
   .cam { width: 96px; }
+  .cam.me { width: 48px; }
   #mode-tabs { gap: 0.75rem; }
   .action-area .hint { display: none; }
 }

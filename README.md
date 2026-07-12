@@ -49,6 +49,18 @@ can rotate.
 
 ## Watching together — two modes
 
+**Cameras.** Your partner's camera is the primary overlay tile; your own
+self-view is a half-size thumbnail beside it with a `×` toggle to hide it
+entirely (a small "Self" chip brings it back). The Document PiP pop-out
+carries the partner cam + chat only.
+
+**Sharing is symmetric.** Either person can share — there is no room-owner
+role anywhere in the app. A server-arbitrated share "baton" allows one active
+sharer at a time: while one person shares, the other's button reads "Partner
+is sharing"; the baton releases when the sharer stops or their connection
+dies. Simultaneous clicks resolve deterministically — the first claim to
+reach the server wins.
+
 **Share (Mode A).** The sharer picks a tab/window via the browser picker; the
 watcher sees it live. Tuned for video: capture capped at 1080p/30fps, encoder
 favors motion (`contentHint='motion'`), sender bitrate capped (2.5 Mbps

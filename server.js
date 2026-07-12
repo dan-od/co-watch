@@ -360,9 +360,39 @@ wss.on('connection', (ws, req) => {
       room.add(ws);
       ws.roomId = roomId;
       logConn('join', { socket: ws.socketId, room: roomId, peers: room.size });
-      send(ws, { type: 'joined', peers: room.size });
+      // shareTaken lets a (re)joining client render the correct baton state.
+      send(ws, {
+        type: 'joined',
+        peers: room.size,
+        shareTaken: !!(room.sharer && room.sharer !== ws),
+      });
       const peer = peerOf(ws);
       if (peer) send(peer, { type: 'peer-joined' });
+      return;
+    }
+
+    // Share baton: only one active sharer per room. First claim received wins
+    // (deterministic on simultaneous clicks); the loser is told it's taken.
+    if (msg.type === 'share-claim') {
+      const room = rooms.get(ws.roomId);
+      if (!room) return;
+      if (!room.sharer || room.sharer === ws || room.sharer.readyState !== room.sharer.OPEN) {
+        room.sharer = ws;
+        send(ws, { type: 'share-granted' });
+        const peer = peerOf(ws);
+        if (peer) send(peer, { type: 'share-taken' });
+      } else {
+        send(ws, { type: 'share-denied' });
+      }
+      return;
+    }
+    if (msg.type === 'share-release') {
+      const room = rooms.get(ws.roomId);
+      if (room && room.sharer === ws) {
+        room.sharer = null;
+        const peer = peerOf(ws);
+        if (peer) send(peer, { type: 'share-released' });
+      }
       return;
     }
 
@@ -383,6 +413,10 @@ wss.on('connection', (ws, req) => {
     const room = rooms.get(ws.roomId);
     if (!room) return;
     room.delete(ws);
+    if (room.sharer === ws) {
+      room.sharer = null; // the baton dies with the sharer's socket
+      for (const other of room) send(other, { type: 'share-released' });
+    }
     if (room.size === 0) {
       rooms.delete(ws.roomId);
     }
