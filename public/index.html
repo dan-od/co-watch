@@ -150,8 +150,22 @@
           <select id="file-select" hidden title="Pick a file from the torrent"></select>
           <button id="sync-load" type="submit" class="primary">Load</button>
           <button type="button" id="resync" class="ghost" disabled title="Push your current position to your friend">Resync</button>
+          <button type="button" id="tracks-btn" class="ghost" hidden title="Subtitles &amp; audio tracks">CC</button>
           <span id="sync-spinner" class="spinner" hidden></span>
         </form>
+      </div>
+
+      <!-- Subtitles & audio popover (native player only; per-person, not synced) -->
+      <div id="tracks-panel" hidden>
+        <h3>Subtitles</h3>
+        <div id="sub-list"></div>
+        <div id="torrent-subs"></div>
+        <div class="tracks-actions">
+          <button id="sub-from-file" class="ghost">Load .srt / .vtt file…</button>
+          <input id="sub-file-input" type="file" accept=".srt,.vtt" hidden>
+        </div>
+        <h3>Audio</h3>
+        <div id="audio-list"></div>
       </div>
 
       <!-- Emoji reactions (Phase 6b) -->

@@ -536,6 +536,42 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 #send-form input { flex: 1; font-size: 0.8rem; padding: 0.35rem 0.5rem; }
 #send-form button { padding: 0.35rem 0.55rem; font-size: 0.8rem; }
 
+/* ---- Subtitles & audio popover ---- */
+#tracks-panel {
+  position: absolute;
+  left: 0.75rem; bottom: 70px;
+  z-index: 30;
+  width: 300px;
+  max-height: 55vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+#tracks-panel[hidden] { display: none; }
+#tracks-panel h3 { margin: 0; font-size: 0.85rem; font-family: 'Space Grotesk', sans-serif; color: var(--accent); }
+.track-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.15rem 0;
+}
+.track-row input { flex: none; accent-color: var(--accent); }
+.track-row .track-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-row button { padding: 0.2rem 0.6rem; font-size: 0.75rem; margin-left: auto; flex: none; }
+.tracks-actions { display: flex; gap: 0.4rem; }
+.tracks-actions button { font-size: 0.8rem; padding: 0.3rem 0.6rem; }
+#tracks-panel .hint { font-size: 0.75rem; }
+#torrent-subs .hint { margin: 0.15rem 0; }
+
 /* ---- Bottom control bar ---- */
 #controlbar {
   display: flex;

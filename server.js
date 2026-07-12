@@ -103,6 +103,22 @@ async function handleTorbox(req, res, urlPath) {
   const authHeaders = { Authorization: `Bearer ${apiKey}` };
   const tbJson = (r) => r.json().catch(() => null);
 
+  // Redacted diagnostic: logs response SHAPE only (status, success/detail, and
+  // the keys of `data`) — never the API key, token, or stream URL. Opt-in via
+  // TORBOX_DEBUG=1 so it stays quiet in normal use.
+  const tbLog = (label, r, j) => {
+    if (!/^(1|true|yes)$/i.test(process.env.TORBOX_DEBUG || '')) return;
+    const d = j?.data;
+    const shape = Array.isArray(d)
+      ? `array[${d.length}]${d[0] && typeof d[0] === 'object' ? ' item{' + Object.keys(d[0]).join(',') + '}' : ''}`
+      : d && typeof d === 'object'
+        ? `{${Object.keys(d).join(',')}}`
+        : typeof d === 'string'
+          ? `string(len ${d.length})`
+          : String(d);
+    console.log(`[torbox] ${label} HTTP ${r?.status} success=${j?.success} detail=${j?.detail ?? ''} data=${shape}`);
+  };
+
   try {
     // ---- Composed endpoints (Phase 4c/4d UI) ----
 
@@ -110,6 +126,7 @@ async function handleTorbox(req, res, urlPath) {
       // Validate the API key against the user endpoint.
       const r = await fetch(`${TORBOX_API}/user/me?settings=false`, { headers: authHeaders });
       const j = await tbJson(r);
+      tbLog('check', r, j);
       sendJson(res, 200, {
         valid: !!j?.success,
         plan: j?.data?.plan ?? null,
@@ -132,6 +149,7 @@ async function handleTorbox(req, res, urlPath) {
           body: JSON.stringify({ hashes: [hash] }),
         });
         const cc = await tbJson(ccR);
+        tbLog('checkcached', ccR, cc);
         if (cc?.success === false && cc?.detail) {
           sendJson(res, 200, { success: false, detail: cc.detail });
           return;
@@ -145,6 +163,7 @@ async function handleTorbox(req, res, urlPath) {
           body: form,
         });
         const ct = await tbJson(ctR);
+        tbLog('createtorrent', ctR, ct);
         torrentId = ct?.data?.torrent_id ?? ct?.data?.id ?? null;
         if (!torrentId) {
           // Torrent may already exist in the account — find it by hash.
@@ -162,6 +181,7 @@ async function handleTorbox(req, res, urlPath) {
         headers: authHeaders,
       });
       const tj = await tbJson(tR);
+      tbLog('mylist(byId)', tR, tj);
       const t = Array.isArray(tj?.data) ? tj.data[0] : tj?.data;
       const files = (t?.files || []).map((f, i) => ({
         id: f?.id ?? i,
@@ -187,12 +207,59 @@ async function handleTorbox(req, res, urlPath) {
       if (body.fileId != null) q.set('file_id', String(body.fileId));
       const r = await fetch(`${TORBOX_API}/torrents/requestdl?${q}`);
       const j = await tbJson(r);
+      tbLog('requestdl', r, j);
       const streamUrl = typeof j?.data === 'string' ? j.data : j?.data?.url;
       if (!streamUrl) {
         sendJson(res, 200, { success: false, detail: j?.detail || 'TorBox did not return a download URL' });
         return;
       }
       sendJson(res, 200, { success: true, streamUrl });
+      return;
+    }
+
+    if (urlPath === '/torbox/subfile') {
+      // Fetch a SUBTITLE file from the user's own torrent (the TorBox CDN is
+      // not CORS-open, so the text comes through here). Hard 3 MB cap so a
+      // mis-picked video file can't be pulled through this path.
+      const MAX_SUB_BYTES = 3 * 1024 * 1024;
+      const q = new URLSearchParams({ token: apiKey, torrent_id: String(body.torrentId ?? '') });
+      if (body.fileId != null) q.set('file_id', String(body.fileId));
+      const r = await fetch(`${TORBOX_API}/torrents/requestdl?${q}`);
+      const j = await tbJson(r);
+      tbLog('subfile:requestdl', r, j);
+      const url = typeof j?.data === 'string' ? j.data : j?.data?.url;
+      if (!url) {
+        sendJson(res, 200, { success: false, detail: j?.detail || 'TorBox did not return a download URL' });
+        return;
+      }
+      const fR = await fetch(url);
+      if (!fR.ok || !fR.body) {
+        sendJson(res, 200, { success: false, detail: `subtitle fetch failed (HTTP ${fR.status})` });
+        return;
+      }
+      if (Number(fR.headers.get('content-length') || 0) > MAX_SUB_BYTES) {
+        fR.body.cancel?.();
+        sendJson(res, 200, { success: false, detail: 'that file is too large to be a subtitle' });
+        return;
+      }
+      const reader = fR.body.getReader();
+      const chunks = [];
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.length;
+        if (received > MAX_SUB_BYTES) {
+          reader.cancel();
+          sendJson(res, 200, { success: false, detail: 'that file is too large to be a subtitle' });
+          return;
+        }
+        chunks.push(value);
+      }
+      const buf = Buffer.concat(chunks);
+      let text = buf.toString('utf8');
+      if (text.includes('�')) text = buf.toString('latin1'); // common for older .srt files
+      sendJson(res, 200, { success: true, text });
       return;
     }
 

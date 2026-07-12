@@ -133,6 +133,25 @@ metadata + files), `/torbox/load` (file → stream URL). The raw Phase-4b
 pass-throughs (`/torbox/checkcached`, `/createtorrent`, `/requestdl`) remain for
 compatibility.
 
+## Subtitles & audio tracks
+
+When a video plays in the native player (TorBox or direct URL), a **CC**
+button appears next to Resync. It's per-person — each of you picks your own
+language; nothing is synced. Two subtitle sources:
+
+- **From this torrent** — any `.srt`/`.vtt` files inside the torrent you
+  loaded are listed; one click fetches them through the server (`/torbox/subfile`,
+  3 MB cap) and converts SRT → WebVTT on the fly.
+- **Load .srt / .vtt file…** — a subtitle file from your disk.
+
+Audio-track switching uses the browser's `audioTracks` API where available
+(Safari exposes embedded tracks; Chrome does not — the panel says so honestly).
+YouTube/Vimeo keep their own built-in CC/audio controls.
+
+Tip for debugging TorBox flows: start the server with `TORBOX_DEBUG=1` to log
+each TorBox API call's status and response shape (keys/tokens/URLs redacted)
+to the console.
+
 ## In-call polish (Phase 6)
 
 - **Swap view** — the `⇄` button on the partner tile promotes their camera to
