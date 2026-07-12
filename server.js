@@ -298,6 +298,24 @@ function peerOf(ws) {
   return null;
 }
 
+// The server is the single source of truth for room occupancy. Every
+// membership or baton change re-broadcasts the authoritative state to every
+// member; clients rebuild their UI from this instead of cached peer state.
+// youAre doubles as the perfect-negotiation role assignment (first=impolite,
+// second=polite) so roles stay consistent across reconnects.
+function broadcastRoomState(room) {
+  const members = [...room]; // Set preserves insertion order
+  members.forEach((sock, i) => {
+    send(sock, {
+      type: 'room-state',
+      count: members.length,
+      youAre: i === 0 ? 'first' : 'second',
+      peerPresent: members.length === 2,
+      shareHolder: room.sharer ? (room.sharer === sock ? 'you' : 'peer') : null,
+    });
+  });
+}
+
 // --- Heartbeat (Phase 5, root-cause fix) --------------------------------------
 // Cloudflare Tunnel (and some NATs) close idle WebSockets; protocol-level pings
 // every HEARTBEAT_MS keep them warm. A socket that misses two pongs in a row is
@@ -360,14 +378,7 @@ wss.on('connection', (ws, req) => {
       room.add(ws);
       ws.roomId = roomId;
       logConn('join', { socket: ws.socketId, room: roomId, peers: room.size });
-      // shareTaken lets a (re)joining client render the correct baton state.
-      send(ws, {
-        type: 'joined',
-        peers: room.size,
-        shareTaken: !!(room.sharer && room.sharer !== ws),
-      });
-      const peer = peerOf(ws);
-      if (peer) send(peer, { type: 'peer-joined' });
+      broadcastRoomState(room); // both members re-sync from the authoritative state
       return;
     }
 
@@ -378,9 +389,8 @@ wss.on('connection', (ws, req) => {
       if (!room) return;
       if (!room.sharer || room.sharer === ws || room.sharer.readyState !== room.sharer.OPEN) {
         room.sharer = ws;
-        send(ws, { type: 'share-granted' });
-        const peer = peerOf(ws);
-        if (peer) send(peer, { type: 'share-taken' });
+        send(ws, { type: 'share-granted' }); // direct reply: capture may start
+        broadcastRoomState(room); // both sides learn the new shareHolder
       } else {
         send(ws, { type: 'share-denied' });
       }
@@ -390,8 +400,7 @@ wss.on('connection', (ws, req) => {
       const room = rooms.get(ws.roomId);
       if (room && room.sharer === ws) {
         room.sharer = null;
-        const peer = peerOf(ws);
-        if (peer) send(peer, { type: 'share-released' });
+        broadcastRoomState(room);
       }
       return;
     }
@@ -412,16 +421,14 @@ wss.on('connection', (ws, req) => {
     });
     const room = rooms.get(ws.roomId);
     if (!room) return;
-    room.delete(ws);
+    room.delete(ws); // immediate cleanup — no ghost members
     if (room.sharer === ws) {
       room.sharer = null; // the baton dies with the sharer's socket
-      for (const other of room) send(other, { type: 'share-released' });
     }
     if (room.size === 0) {
       rooms.delete(ws.roomId);
-    }
-    for (const other of room) {
-      send(other, { type: 'peer-left' });
+    } else {
+      broadcastRoomState(room); // the survivor sees count drop to 1
     }
   });
 });

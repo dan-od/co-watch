@@ -322,7 +322,7 @@ function enterRoom(roomId) {
     ws.addEventListener('open', () => {
       reconnectAttempts = 0;
       netSignaling = 'connected';
-      signal({ type: 'join', room: roomId }); // 'joined' reply sets the status
+      signal({ type: 'join', room: roomId }); // server replies with 'room-state'
     });
 
     ws.addEventListener('message', (event) => {
@@ -365,25 +365,43 @@ function enterRoom(roomId) {
 
   async function handleSignal(msg) {
     switch (msg.type) {
-      case 'joined':
-        peerPresent = msg.peers === 2;
-        polite = peerPresent;
+      case 'room-state': {
+        // Server-authoritative occupancy (Phase 5 fix): rebuild peer, role,
+        // and baton state from this message on every join/reconnect/change —
+        // never from pre-drop memory.
+        peerPresent = msg.peerPresent;
+        polite = msg.youAre === 'second'; // server-assigned; survives reconnects
         clearTimeout(peerLeftGraceTimer);
         peerLeftGraceTimer = null;
-        if (msg.shareTaken) {
+
+        if (msg.shareHolder === 'peer') {
           shareBaton = 'peer';
-          if (screenStream) stopScreenShare(); // peer took the baton while we were away
+          if (screenStream) stopScreenShare(); // converge: server says peer holds it
+        } else if (msg.shareHolder === 'you') {
+          shareBaton = 'mine';
+        } else if (screenStream) {
+          // Still capturing but the server forgot us (our socket died
+          // mid-share) — re-claim the baton.
+          shareBaton = 'free';
+          signal({ type: 'share-claim' });
         } else {
-          shareBaton = screenStream ? 'mine' : 'free';
-          if (screenStream) signal({ type: 'share-claim' }); // re-claim after a reconnect
+          shareBaton = 'free';
         }
+
         if (peerPresent) {
           setStatus(mode === 'sync' ? 'Synced' : 'Connected', 'ok');
           await ensureHealthyPc();
         } else if (pc && pc.connectionState === 'connected') {
-          // We reconnected first after a blip and media is still up; the peer
-          // should rejoin shortly.
-          setStatus('Waiting for your friend to reconnect…', 'warn');
+          // Peer's socket dropped but P2P media still flows — likely just a
+          // signaling blip on their side. Grace window before teardown.
+          setStatus('Your friend disconnected — waiting for them to return…', 'warn');
+          peerLeftGraceTimer = setTimeout(() => {
+            peerLeftGraceTimer = null;
+            if (!peerPresent) {
+              teardownPeerConnection();
+              setStatus('Your friend left — waiting for them to rejoin…', 'warn');
+            }
+          }, 12_000);
         } else {
           // Alone with a dead (or no) peer connection — clean up rather than
           // leaving a zombie pc endlessly attempting ICE restarts.
@@ -392,30 +410,7 @@ function enterRoom(roomId) {
         }
         updateShareButton();
         break;
-      case 'peer-joined':
-        peerPresent = true;
-        polite = false;
-        clearTimeout(peerLeftGraceTimer);
-        peerLeftGraceTimer = null;
-        setStatus(mode === 'sync' ? 'Synced' : 'Connected', 'ok');
-        await ensureHealthyPc();
-        updateShareButton();
-        break;
-      case 'peer-left':
-        // Often just the peer's signaling socket blipping while P2P media keeps
-        // flowing — give them a grace window before tearing anything down.
-        peerPresent = false;
-        setStatus('Your friend disconnected — waiting for them to return…', 'warn');
-        updateShareButton();
-        clearTimeout(peerLeftGraceTimer);
-        peerLeftGraceTimer = setTimeout(() => {
-          peerLeftGraceTimer = null;
-          if (!peerPresent) {
-            teardownPeerConnection();
-            setStatus('Your friend left — waiting for them to rejoin…', 'warn');
-          }
-        }, 12_000);
-        break;
+      }
       case 'room-full':
         rejected = true;
         setStatus('Room is full (two people max).', 'error');
@@ -436,7 +431,7 @@ function enterRoom(roomId) {
       case 'screen-share':
         if (msg.on) {
           remoteScreenStreamId = msg.streamId;
-          shareBaton = 'peer'; // belt & braces alongside share-taken
+          shareBaton = 'peer'; // belt & braces alongside room-state
           updateShareButton();
           setMode('screen');
         } else {
@@ -461,15 +456,6 @@ function enterRoom(roomId) {
       case 'share-denied':
         shareBaton = 'peer';
         notice('Your friend is already sharing.', 'warn', 4000);
-        updateShareButton();
-        break;
-      case 'share-taken':
-        shareBaton = 'peer';
-        if (screenStream) stopScreenShare(); // converge if both thought they held it
-        updateShareButton();
-        break;
-      case 'share-released':
-        if (shareBaton === 'peer') shareBaton = 'free';
         updateShareButton();
         break;
       case 'sync-load':
@@ -1338,6 +1324,8 @@ function enterRoom(roomId) {
     get sourceMode() { return sourceMode; },
     get pipWindow() { return pipWindow; },
     get shareBaton() { return shareBaton; },
+    get polite() { return polite; },
+    get peerPresent() { return peerPresent; },
     signal,
   };
 }
