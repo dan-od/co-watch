@@ -23,7 +23,7 @@ const SYNC_DRIFT_TOLERANCE = 0.75; // seconds — follower seeks if further off 
 const SYNC_SUPPRESS_MS = 800; // echo-suppression window after applying a remote sync event
 
 const UNSUPPORTED_MSG =
-  'Sync mode supports YouTube, Vimeo, direct video links, and TorBox/Stremio content. ' +
+  'Sync mode supports YouTube, Vimeo, direct video links, and TorBox magnets. ' +
   'For anything else, use Share screen instead.';
 
 // ICE servers come from the server (/ice-config), which reads TURN credentials
@@ -772,23 +772,33 @@ function enterRoom(roomId) {
   // ---- Sync mode (Mode B) ----
   const spinner = (on) => ($('sync-spinner').hidden = !on);
 
-  // Source toggle (URL vs TorBox)
+  // Source toggle (URL / TorBox / metadata Search)
   function setSourceMode(m) {
     sourceMode = m;
     $('source-url').classList.toggle('active', m === 'url');
     $('source-torbox').classList.toggle('active', m === 'torbox');
+    $('source-search').classList.toggle('active', m === 'search');
     $('sync-input').placeholder =
-      m === 'torbox' ? 'Magnet link or 40-char torrent hash' : 'YouTube / Vimeo / .mp4 URL';
+      m === 'torbox'
+        ? 'Magnet link or 40-char torrent hash'
+        : m === 'search'
+          ? 'Search for a movie or show…'
+          : 'YouTube / Vimeo / .mp4 URL';
+    $('sync-load').textContent = m === 'search' ? 'Search' : 'Load';
     $('file-select').hidden = true;
+    $('search-panel').hidden = m !== 'search';
+    if (m === 'search') checkTmdbKey();
   }
   $('source-url').addEventListener('click', () => setSourceMode('url'));
   $('source-torbox').addEventListener('click', () => setSourceMode('torbox'));
+  $('source-search').addEventListener('click', () => setSourceMode('search'));
 
   $('sync-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const raw = $('sync-input').value.trim();
     if (!raw) return;
-    if (sourceMode === 'torbox') loadTorbox(raw);
+    if (sourceMode === 'search') runSearch(raw);
+    else if (sourceMode === 'torbox') loadTorbox(raw);
     else loadFromUrl(raw);
   });
 
@@ -817,11 +827,13 @@ function enterRoom(roomId) {
         const mine = await resolveTorbox(source.magnet, source.hash, source.fileName);
         if (mine) {
           await loadSource({ ...source, resolvedUrl: mine });
+          showKnownMeta(source.hash);
           return;
         }
       }
       if (source.resolvedUrl) {
         await loadSource(source);
+        showKnownMeta(source.hash);
         return;
       }
       notice('Enter your TorBox API key (gear icon) to watch this.', 'warn');
@@ -1011,6 +1023,8 @@ function enterRoom(roomId) {
         resolvedUrl: dl.streamUrl,
       };
       await loadSource(source);
+      rememberHashMeta(src.hash); // ties the hash to the last-selected search result
+      showKnownMeta(src.hash);
       signal({ type: 'sync-load', source });
     } catch (err) {
       notice(`TorBox error: ${err.message || err}`, 'error');
@@ -1039,7 +1053,228 @@ function enterRoom(roomId) {
     }
   }
 
-  // ---- TorBox settings panel ----
+  // ---- Metadata search + watchlist (Phase 4e) ----
+  // TMDb metadata browsing only (posters, ratings, overviews). Watching still
+  // requires the user to paste their own URL or magnet in URL/TorBox mode —
+  // nothing here fetches, resolves, or discovers content.
+  const WATCHLIST_KEY = 'watchlist';
+  const HASH_META_KEY = 'hash_meta'; // magnet hash -> saved metadata
+  let lastSelectedMeta = null; // most recently opened search result
+
+  const getTmdbKey = () => (localStorage.getItem('tmdb_api_key') || '').trim();
+
+  function searchStatus(text, kind = '') {
+    $('search-status').textContent = text;
+    $('search-status').className = `hint ${kind}`;
+  }
+
+  function checkTmdbKey() {
+    if (!getTmdbKey()) {
+      searchStatus('Enter your TMDb API key (gear icon) to search metadata.', 'warn');
+    } else if (!$('search-results').childElementCount) {
+      searchStatus('Search for a movie or show to see posters and details.');
+    }
+  }
+
+  async function runSearch(query) {
+    if (!getTmdbKey()) {
+      searchStatus('Enter your TMDb API key (gear icon) to search metadata.', 'warn');
+      openSettings(true);
+      return;
+    }
+    $('search-detail').hidden = true;
+    $('watchlist-toggle').classList.remove('active');
+    searchStatus('Searching…');
+    spinner(true);
+    try {
+      const p = new URLSearchParams({ query, type: $('search-type').value });
+      const year = $('search-year').value.trim();
+      if (year) p.set('year', year);
+      const res = await fetch(`/api/tmdb/search?${p}`, { headers: { 'x-tmdb-key': getTmdbKey() } });
+      const data = await res.json().catch(() => null);
+      if (!data?.success) {
+        searchStatus(`Search failed: ${data?.detail || `HTTP ${res.status}`}`, 'error');
+        return;
+      }
+      if (!data.data.length) {
+        $('search-results').replaceChildren();
+        searchStatus('No results — try different keywords or drop the year.', 'warn');
+        return;
+      }
+      renderCards(data.data, { watchlist: false });
+      searchStatus(`${data.data.length} results — click one for details.`, 'ok');
+    } catch (err) {
+      searchStatus(`Search failed: ${err.message || err}`, 'error');
+    } finally {
+      spinner(false);
+    }
+  }
+
+  function posterEl(item, width) {
+    if (item.poster_path) {
+      const img = document.createElement('img');
+      img.src = `https://image.tmdb.org/t/p/w${width}${item.poster_path}`;
+      img.alt = item.title;
+      img.loading = 'lazy';
+      return img;
+    }
+    const div = document.createElement('div');
+    div.className = 'no-poster';
+    div.textContent = 'No poster';
+    return div;
+  }
+
+  function renderCards(items, { watchlist }) {
+    const grid = $('search-results');
+    grid.replaceChildren();
+    for (const item of items) {
+      const card = document.createElement('div');
+      card.className = 'result-card';
+      card.append(posterEl(item, 200));
+      const body = document.createElement('div');
+      body.className = 'card-body';
+      const h = document.createElement('h4');
+      h.textContent = item.title;
+      h.title = item.title;
+      const meta = document.createElement('span');
+      meta.className = 'card-meta';
+      meta.textContent = `${item.year || '—'} · ${item.type === 'movie' ? 'Movie' : 'TV'}`;
+      const rating = document.createElement('span');
+      rating.className = 'card-rating';
+      rating.textContent = item.vote_average ? `★ ${item.vote_average.toFixed(1)}` : '';
+      const btn = document.createElement('button');
+      btn.textContent = watchlist ? 'Details' : 'Select';
+      btn.addEventListener('click', () => showDetail(item));
+      body.append(h, meta, rating, btn);
+      if (watchlist) {
+        const rm = document.createElement('button');
+        rm.className = 'ghost';
+        rm.textContent = 'Remove';
+        rm.addEventListener('click', () => {
+          saveWatchlist(loadWatchlist().filter((w) => !(w.id === item.id && w.type === item.type)));
+          renderWatchlist();
+        });
+        body.append(rm);
+      }
+      card.append(body);
+      grid.append(card);
+    }
+  }
+
+  function showDetail(item) {
+    lastSelectedMeta = {
+      id: item.id,
+      type: item.type,
+      title: item.title,
+      year: item.year,
+      poster_path: item.poster_path,
+      vote_average: item.vote_average,
+    };
+    const box = $('search-detail');
+    box.replaceChildren();
+    box.append(posterEl(item, 342));
+    const body = document.createElement('div');
+    body.className = 'detail-body';
+    const h = document.createElement('h3');
+    h.textContent = `${item.title}${item.year ? ` (${item.year})` : ''}`;
+    const meta = document.createElement('span');
+    meta.className = 'detail-meta';
+    meta.textContent = `${item.type === 'movie' ? 'Movie' : 'TV show'}${
+      item.vote_average ? ` · ★ ${item.vote_average.toFixed(1)} / 10` : ''
+    }`;
+    const overview = document.createElement('p');
+    overview.className = 'detail-overview';
+    overview.textContent = item.overview || 'No overview available.';
+    const hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent =
+      'To watch it together, paste your own link or magnet using the URL or TorBox source below.';
+    const actions = document.createElement('div');
+    actions.className = 'detail-actions';
+    const toPaste = document.createElement('button');
+    toPaste.className = 'primary';
+    toPaste.textContent = 'Go to paste (TorBox)';
+    toPaste.addEventListener('click', () => {
+      box.hidden = true;
+      setSourceMode('torbox');
+      $('sync-input').value = '';
+      $('sync-input').focus();
+    });
+    const save = document.createElement('button');
+    const listed = loadWatchlist().some((w) => w.id === item.id && w.type === item.type);
+    save.textContent = listed ? 'In watchlist ✓' : 'Save to watchlist';
+    save.disabled = listed;
+    save.addEventListener('click', () => {
+      const list = loadWatchlist();
+      if (!list.some((w) => w.id === item.id && w.type === item.type)) {
+        list.push({ ...lastSelectedMeta, overview: item.overview, addedAt: Date.now() });
+        saveWatchlist(list);
+      }
+      save.textContent = 'In watchlist ✓';
+      save.disabled = true;
+    });
+    const back = document.createElement('button');
+    back.className = 'ghost';
+    back.textContent = 'Back';
+    back.addEventListener('click', () => {
+      box.hidden = true;
+    });
+    actions.append(toPaste, save, back);
+    body.append(h, meta, overview, hint, actions);
+    box.append(body);
+    box.hidden = false;
+  }
+
+  const loadWatchlist = () => {
+    try {
+      return JSON.parse(localStorage.getItem(WATCHLIST_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  };
+  const saveWatchlist = (list) => localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+
+  function renderWatchlist() {
+    const list = loadWatchlist().sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    renderCards(list, { watchlist: true });
+    searchStatus(
+      list.length ? `${list.length} saved.` : 'Watchlist is empty — search and save something.',
+      list.length ? 'ok' : ''
+    );
+  }
+
+  $('watchlist-toggle').addEventListener('click', () => {
+    const on = $('watchlist-toggle').classList.toggle('active');
+    $('search-detail').hidden = true;
+    if (on) {
+      renderWatchlist();
+    } else {
+      $('search-results').replaceChildren();
+      checkTmdbKey();
+    }
+  });
+
+  // Metadata memory: associate a loaded magnet's hash with the most recently
+  // selected search result so re-pasting it later shows what it is.
+  const loadHashMeta = () => {
+    try {
+      return JSON.parse(localStorage.getItem(HASH_META_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  };
+  function rememberHashMeta(hash) {
+    if (!lastSelectedMeta || !hash) return;
+    const map = loadHashMeta();
+    map[hash] = lastSelectedMeta;
+    localStorage.setItem(HASH_META_KEY, JSON.stringify(map));
+  }
+  function showKnownMeta(hash) {
+    const m = hash ? loadHashMeta()[hash] : null;
+    if (m) notice(`Now watching: ${m.title}${m.year ? ` (${m.year})` : ''} — synced.`, 'ok', 6000);
+  }
+
+  // ---- Settings panel ----
   $('torbox-key').value = getKey();
   updateKeyStatus(getKey() ? 'unknown' : 'empty');
 
@@ -1073,6 +1308,55 @@ function enterRoom(roomId) {
       updateKeyStatus(r?.valid ? 'valid' : 'invalid', r?.plan, r?.detail);
     } catch {
       updateKeyStatus('invalid', null, 'could not reach TorBox');
+    }
+  }
+
+  $('tmdb-key').value = getTmdbKey();
+  updateTmdbKeyStatus(getTmdbKey() ? 'unknown' : 'empty');
+  $('tmdb-save').addEventListener('click', validateAndSaveTmdbKey);
+  $('tmdb-key').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      validateAndSaveTmdbKey();
+    }
+  });
+
+  async function validateAndSaveTmdbKey() {
+    const key = $('tmdb-key').value.trim();
+    localStorage.setItem('tmdb_api_key', key);
+    if (!key) {
+      updateTmdbKeyStatus('empty');
+      checkTmdbKey();
+      return;
+    }
+    updateTmdbKeyStatus('checking');
+    try {
+      const res = await fetch('/api/tmdb/search?query=test', { headers: { 'x-tmdb-key': key } });
+      const j = await res.json().catch(() => null);
+      updateTmdbKeyStatus(j?.success ? 'valid' : 'invalid', j?.detail);
+    } catch {
+      updateTmdbKeyStatus('invalid', 'could not reach the server');
+    }
+    checkTmdbKey();
+  }
+
+  function updateTmdbKeyStatus(state, detail) {
+    const el = $('tmdb-key-status');
+    if (state === 'empty') {
+      el.textContent = 'No key saved.';
+      el.className = 'key-status';
+    } else if (state === 'unknown') {
+      el.textContent = 'Key saved (click Save to re-validate).';
+      el.className = 'key-status';
+    } else if (state === 'checking') {
+      el.textContent = 'Checking…';
+      el.className = 'key-status';
+    } else if (state === 'valid') {
+      el.textContent = 'Valid.';
+      el.className = 'key-status valid';
+    } else {
+      el.textContent = `Invalid${detail ? ` — ${detail}` : ''}.`;
+      el.className = 'key-status invalid';
     }
   }
 

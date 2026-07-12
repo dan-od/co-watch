@@ -39,6 +39,7 @@ credentials never go in source (PRD §15). Real environment variables override
 | `TURN_USERNAME` | TURN username. |
 | `TURN_CREDENTIAL` | TURN credential/password. |
 | `FORCE_RELAY` | Set to `1` to force all media through TURN (`iceTransportPolicy: 'relay'`). **Testing only.** |
+| `TMDB_API_KEY` | Optional server-wide TMDb key for the metadata search; a key entered in Settings overrides it. |
 
 The server exposes the resulting ICE configuration to clients at
 `/ice-config`. Google STUN (`stun:stun.l.google.com:19302`) is always
@@ -90,8 +91,23 @@ sources:
 | Magnet link or 40-char torrent hash | TorBox → resolved to a direct URL, played in native `<video>` |
 | Anything else | Not supported — use Share screen |
 
-In Sync mode a **URL / TorBox** toggle sits next to the input. **Resync** pushes
-your current position/state to your friend.
+In Sync mode a **URL / TorBox / Search** toggle sits next to the input.
+**Resync** pushes your current position/state to your friend.
+
+### Metadata search & watchlist (Phase 4e)
+
+The **Search** source browses TMDb metadata — posters, year, rating,
+overview — for movies and TV shows, with a local **watchlist** (browser
+localStorage). It is metadata only: the app never fetches, resolves, or
+discovers content from a search result. To watch something you still paste
+your own link or magnet in the URL/TorBox source; the "Go to paste" button
+in a result's detail view jumps there. If you load a magnet right after
+selecting a result, the app remembers the association and shows
+"Now watching: <title>" for that hash from then on.
+
+Requires a free TMDb API key (Settings → TMDb API key; stored in this
+browser only, sent per-request through the server's `/api/tmdb/search`
+proxy). Alternatively set `TMDB_API_KEY` in `.env` server-wide.
 
 ### TorBox
 
@@ -159,5 +175,6 @@ compatibility.
 - [x] Phase 4a — screen-share tuning (bitrate cap, contentHint, tab-capture self-exclude)
 - [x] Phase 4b — sync mode (YouTube / Vimeo / direct video / TorBox)
 - [x] Phase 4c — single-window restyle, Document PiP companion, TorBox UI
+- [x] Phase 4e — metadata search & watchlist (TMDb; metadata only — no content discovery)
 - [x] Phase 5 — robustness (heartbeat, auto-reconnect, ICE restart, network indicator, connection log)
 - [ ] Phase 6 — polish (chat, screen audio, swap view)

@@ -40,17 +40,25 @@
         </button>
       </div>
 
-      <!-- TorBox settings popover -->
+      <!-- Settings popover -->
       <div id="settings-panel" hidden>
-        <h3>TorBox settings</h3>
-        <label for="torbox-key">API key</label>
+        <h3>Settings</h3>
+        <label for="torbox-key">TorBox API key</label>
         <div class="key-row">
           <input id="torbox-key" type="password" placeholder="Paste your TorBox API key" autocomplete="off">
           <button id="torbox-save" class="ghost">Save</button>
         </div>
         <p id="torbox-key-status" class="key-status"></p>
-        <p class="hint">Get your API key from torbox.app/dashboard. It is stored only in this browser
-          and sent per-request through this room's server (never stored there).</p>
+        <p class="hint">From torbox.app/dashboard. Stored only in this browser and sent per-request
+          through this room's server (never stored there).</p>
+        <label for="tmdb-key">TMDb API key</label>
+        <div class="key-row">
+          <input id="tmdb-key" type="password" placeholder="Paste your TMDb API key" autocomplete="off">
+          <button id="tmdb-save" class="ghost">Save</button>
+        </div>
+        <p id="tmdb-key-status" class="key-status"></p>
+        <p class="hint">Powers the metadata search (posters, ratings). Free key from themoviedb.org.
+          Same storage rules as above.</p>
       </div>
     </header>
 
@@ -69,6 +77,25 @@
           <div id="sync-player"></div>
           <div id="sync-placeholder" class="placeholder">
             <p>Paste a YouTube, Vimeo, or direct video link below —<br>or flip to TorBox for magnets.</p>
+          </div>
+
+          <!-- Metadata search (Phase 4e): browse TMDb metadata, keep a watchlist.
+               Finds metadata ONLY — playing something still means pasting your
+               own link/magnet in the URL or TorBox source. -->
+          <div id="search-panel" hidden>
+            <div id="search-panel-head">
+              <select id="search-type" title="Filter by type">
+                <option value="all">All</option>
+                <option value="movie">Movies</option>
+                <option value="tv">TV shows</option>
+              </select>
+              <input id="search-year" type="number" min="1900" max="2099" placeholder="Year">
+              <span class="hint" id="search-hint">Metadata only — pick something, then paste your own link in URL or TorBox.</span>
+              <button id="watchlist-toggle" class="ghost">Watchlist</button>
+            </div>
+            <p id="search-status" class="hint"></p>
+            <div id="search-results"></div>
+            <div id="search-detail" hidden></div>
           </div>
         </div>
 
@@ -110,6 +137,7 @@
         <div id="source-toggle" role="group" aria-label="Source type">
           <button id="source-url" class="seg active">URL</button>
           <button id="source-torbox" class="seg">TorBox</button>
+          <button id="source-search" class="seg">Search</button>
         </div>
         <form id="sync-form">
           <input id="sync-input" placeholder="YouTube / Vimeo / .mp4 URL" autocomplete="off">
