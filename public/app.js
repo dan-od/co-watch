@@ -294,41 +294,88 @@ function enterRoom(roomId) {
   let sourceMode = 'url'; // 'url' | 'torbox'
   let player = null;
   let suppressUntil = 0;
+  let peerLeftGraceTimer = null; // peer-left may be a signaling blip; delay teardown
+  let iceRestartTimer = null;
+  let netSignaling = 'connecting'; // 'connecting' | 'connected' | 'reconnecting'
 
-  // ---- Signaling socket ----
+  // ---- Signaling socket with auto-reconnect (Phase 5) ----
+  // The socket can idle out (Cloudflare tunnel) or drop on a network blip.
+  // Reconnect with exponential backoff (1s,2s,4s,8s… cap 15s), rejoin the same
+  // room, and resume. Only the Leave button (or room-full) stops retrying.
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}`);
+  let ws = null;
+  let leaving = false;
+  let reconnectAttempts = 0;
+  let reconnectTimer = null;
+
   const signal = (msg) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   };
 
-  ws.addEventListener('open', () => signal({ type: 'join', room: roomId }));
-
   let inbox = Promise.resolve();
-  ws.addEventListener('message', (event) => {
-    let msg;
-    try {
-      msg = JSON.parse(event.data);
-    } catch {
-      return;
+
+  function connectWs() {
+    reconnectTimer = null;
+    ws = new WebSocket(`${proto}://${location.host}`);
+
+    ws.addEventListener('open', () => {
+      reconnectAttempts = 0;
+      netSignaling = 'connected';
+      signal({ type: 'join', room: roomId }); // 'joined' reply sets the status
+    });
+
+    ws.addEventListener('message', (event) => {
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      inbox = inbox.then(() => handleSignal(msg)).catch((err) => console.error('signal error:', err));
+    });
+
+    ws.addEventListener('close', () => {
+      if (leaving || rejected) return;
+      scheduleReconnect();
+    });
+    // Errors are followed by 'close'; reconnect is handled there.
+    ws.addEventListener('error', () => {});
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    netSignaling = 'reconnecting';
+    const delay = Math.min(15_000, 1000 * 2 ** reconnectAttempts);
+    reconnectAttempts++;
+    setStatus(`Reconnecting… (attempt ${reconnectAttempts})`, 'warn');
+    reconnectTimer = setTimeout(connectWs, delay);
+  }
+
+  // A restored network connection is a good moment to skip the backoff.
+  window.addEventListener('online', () => {
+    if (reconnectTimer && !leaving && !rejected) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+      connectWs();
     }
-    inbox = inbox.then(() => handleSignal(msg)).catch((err) => console.error('signal error:', err));
   });
 
-  ws.addEventListener('close', () => {
-    if (!rejected) setStatus('Disconnected — refresh to reconnect.', 'error');
-  });
-  ws.addEventListener('error', () => setStatus('Could not reach the server.', 'error'));
+  connectWs();
 
   async function handleSignal(msg) {
     switch (msg.type) {
       case 'joined':
         peerPresent = msg.peers === 2;
         polite = peerPresent;
+        clearTimeout(peerLeftGraceTimer);
+        peerLeftGraceTimer = null;
         if (peerPresent) {
-          setStatus('Connected', 'ok');
-          await createPeerConnection();
+          setStatus(mode === 'sync' ? 'Synced' : 'Connected', 'ok');
+          await ensureHealthyPc();
           $('share-screen').disabled = false;
+        } else if (pc) {
+          // We reconnected first after a blip; the peer should rejoin shortly.
+          setStatus('Waiting for your friend to reconnect…', 'warn');
         } else {
           setStatus('Waiting for your friend…');
         }
@@ -336,14 +383,25 @@ function enterRoom(roomId) {
       case 'peer-joined':
         peerPresent = true;
         polite = false;
-        setStatus('Connected', 'ok');
-        await createPeerConnection();
+        clearTimeout(peerLeftGraceTimer);
+        peerLeftGraceTimer = null;
+        setStatus(mode === 'sync' ? 'Synced' : 'Connected', 'ok');
+        await ensureHealthyPc();
         $('share-screen').disabled = false;
         break;
       case 'peer-left':
+        // Often just the peer's signaling socket blipping while P2P media keeps
+        // flowing — give them a grace window before tearing anything down.
         peerPresent = false;
-        teardownPeerConnection();
-        setStatus('Your friend left — waiting for them to rejoin…', 'warn');
+        setStatus('Your friend disconnected — waiting for them to return…', 'warn');
+        clearTimeout(peerLeftGraceTimer);
+        peerLeftGraceTimer = setTimeout(() => {
+          peerLeftGraceTimer = null;
+          if (!peerPresent) {
+            teardownPeerConnection();
+            setStatus('Your friend left — waiting for them to rejoin…', 'warn');
+          }
+        }, 12_000);
         break;
       case 'room-full':
         rejected = true;
@@ -413,6 +471,14 @@ function enterRoom(roomId) {
 
   $('retry-media').addEventListener('click', startLocalMedia);
 
+  // If the old peer connection survived the signaling blip (P2P media is
+  // independent of the socket), keep it; otherwise start fresh.
+  async function ensureHealthyPc() {
+    if (pc && pc.connectionState === 'connected') return;
+    if (pc) teardownPeerConnection();
+    await createPeerConnection();
+  }
+
   // ---- Peer connection (perfect negotiation) ----
   async function createPeerConnection() {
     if (pc) return;
@@ -449,18 +515,50 @@ function enterRoom(roomId) {
     pc.onconnectionstatechange = () => {
       switch (pc?.connectionState) {
         case 'connected':
-          setStatus(mode === 'sync' ? 'Synced' : 'Connected', 'ok');
+          if (peerPresent) setStatus(mode === 'sync' ? 'Synced' : 'Connected', 'ok');
           break;
         case 'disconnected':
           setStatus('Connection unstable — recovering…', 'warn');
           break;
         case 'failed':
-          setStatus('Connection failed — both of you may need to refresh.', 'error');
+          setStatus('Connection lost — trying an ICE restart…', 'warn');
           break;
       }
     };
 
+    // Phase 5: ICE often self-heals within a couple of seconds; if it doesn't,
+    // restart ICE over the (possibly reconnected) signaling channel instead of
+    // tearing the call down. restartIce() fires onnegotiationneeded, so the
+    // offer flows through the normal perfect-negotiation path.
+    pc.oniceconnectionstatechange = () => {
+      const st = pc?.iceConnectionState;
+      if (st === 'disconnected' || st === 'failed') {
+        scheduleIceRestart();
+      } else if (st === 'connected' || st === 'completed') {
+        clearTimeout(iceRestartTimer);
+        iceRestartTimer = null;
+      }
+    };
+
     addLocalTracks();
+  }
+
+  function scheduleIceRestart() {
+    if (iceRestartTimer || !pc) return;
+    iceRestartTimer = setTimeout(() => {
+      iceRestartTimer = null;
+      if (!pc) return;
+      const st = pc.iceConnectionState;
+      if (st !== 'disconnected' && st !== 'failed') return; // self-healed
+      setStatus('Restarting the media connection…', 'warn');
+      try {
+        pc.restartIce();
+      } catch (err) {
+        console.warn('restartIce failed:', err);
+      }
+      // If it's still down when this fires again, another restart is scheduled
+      // by the next state change; the signaling reconnect keeps retrying too.
+    }, 3000);
   }
 
   function addLocalTracks() {
@@ -484,6 +582,8 @@ function enterRoom(roomId) {
   }
 
   function teardownPeerConnection() {
+    clearTimeout(iceRestartTimer);
+    iceRestartTimer = null;
     if (pc) {
       pc.close();
       pc = null;
@@ -933,6 +1033,85 @@ function enterRoom(roomId) {
     }
   }
 
+  // ---- Network status indicator (Phase 5) ----
+  // Every 2s: RTT from the selected candidate pair, packet loss + bitrate from
+  // inbound-rtp deltas. Good <150ms & <2% · Fair 150–300ms or 2–5% · Poor above.
+  let prevInbound = null;
+  const statsTimer = setInterval(pollNetStats, 2000);
+
+  function renderNet(text, kind, tooltip) {
+    $('net-label').textContent = text;
+    $('net-dot').className = kind;
+    $('net-wrap').title = tooltip;
+  }
+
+  async function pollNetStats() {
+    const sigText = netSignaling === 'reconnecting' ? 'reconnecting' : 'connected';
+    const iceText = pc?.iceConnectionState ?? '—';
+    if (netSignaling === 'reconnecting') {
+      renderNet('Reconnecting', 'error', `Signaling: reconnecting · ICE: ${iceText}`);
+      return;
+    }
+    if (!pc || pc.connectionState !== 'connected') {
+      renderNet('No call', '', `Signaling: ${sigText} · ICE: ${iceText}`);
+      prevInbound = null;
+      return;
+    }
+    let rttMs = null;
+    let recv = 0;
+    let lost = 0;
+    let bytes = 0;
+    try {
+      const stats = await pc.getStats();
+      let pairId = null;
+      stats.forEach((r) => {
+        if (r.type === 'transport' && r.selectedCandidatePairId) pairId = r.selectedCandidatePairId;
+      });
+      stats.forEach((r) => {
+        if (
+          r.type === 'candidate-pair' &&
+          (pairId ? r.id === pairId : r.nominated && r.state === 'succeeded') &&
+          typeof r.currentRoundTripTime === 'number'
+        ) {
+          rttMs = r.currentRoundTripTime * 1000;
+        }
+        if (r.type === 'inbound-rtp') {
+          recv += r.packetsReceived || 0;
+          lost += r.packetsLost || 0;
+          bytes += r.bytesReceived || 0;
+        }
+      });
+    } catch {
+      return; // pc closed mid-poll
+    }
+    const now = Date.now();
+    let lossPct = 0;
+    let mbps = 0;
+    if (prevInbound) {
+      const dRecv = Math.max(0, recv - prevInbound.recv);
+      const dLost = Math.max(0, lost - prevInbound.lost);
+      if (dRecv + dLost > 0) lossPct = (dLost / (dRecv + dLost)) * 100;
+      mbps = Math.max(0, ((bytes - prevInbound.bytes) * 8) / (now - prevInbound.ts) / 1000);
+    }
+    prevInbound = { ts: now, recv, lost, bytes };
+
+    let quality = 'Good';
+    let kind = 'ok';
+    if ((rttMs ?? 0) > 300 || lossPct > 5) {
+      quality = 'Poor';
+      kind = 'error';
+    } else if ((rttMs ?? 0) > 150 || lossPct > 2) {
+      quality = 'Fair';
+      kind = 'warn';
+    }
+    renderNet(
+      quality,
+      kind,
+      `RTT ${rttMs != null ? `${Math.round(rttMs)} ms` : '—'} · loss ${lossPct.toFixed(1)}% · ` +
+        `↓ ${mbps.toFixed(1)} Mbps · signaling: ${sigText} · ICE: ${iceText}`
+    );
+  }
+
   // ---- Control cluster: mic / cam / chat / leave ----
   function syncToggleButtons() {
     const audio = localStream?.getAudioTracks()[0];
@@ -959,10 +1138,14 @@ function enterRoom(roomId) {
     $('toggle-chat').title = collapsed ? 'Show chat' : 'Hide chat';
   });
   $('leave').addEventListener('click', () => {
+    leaving = true; // stop the auto-reconnect loop
     try {
+      clearTimeout(reconnectTimer);
+      clearTimeout(peerLeftGraceTimer);
+      clearInterval(statsTimer);
       if (pipWindow) pipWindow.close();
       pc?.close();
-      ws.close();
+      ws?.close();
       localStream?.getTracks().forEach((t) => t.stop());
       screenStream?.getTracks().forEach((t) => t.stop());
     } finally {
@@ -1046,7 +1229,7 @@ function enterRoom(roomId) {
     e.preventDefault();
     const input = $('send-input');
     const text = input.value.trim();
-    if (!text || ws.readyState !== WebSocket.OPEN) return;
+    if (!text || ws?.readyState !== WebSocket.OPEN) return;
     signal({ type: 'chat', text });
     appendMessage('You', text);
     input.value = '';

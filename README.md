@@ -105,6 +105,29 @@ metadata + files), `/torbox/load` (file → stream URL). The raw Phase-4b
 pass-throughs (`/torbox/checkcached`, `/createtorrent`, `/requestdl`) remain for
 compatibility.
 
+## Robustness (Phase 5)
+
+- **Heartbeat:** the server pings every WebSocket every 25 s (`HEARTBEAT_MS`
+  env to override) and terminates sockets that miss two pongs. This keeps the
+  signaling socket warm through Cloudflare Tunnel (which closes idle
+  WebSockets) and reaps dead clients promptly.
+- **Auto-reconnect:** if the signaling socket drops, the client reconnects
+  with exponential backoff (1s → 2s → 4s → 8s, capped at 15s), rejoins the
+  same room, and resumes — no manual refresh. The P2P call is independent of
+  the socket, so media usually keeps flowing straight through a signaling
+  blip; a `peer-left` gets a 12 s grace window before anything is torn down.
+- **ICE restart:** if the media connection goes `disconnected`/`failed`, the
+  client waits ~3 s (it often self-heals) then performs an ICE restart via
+  the normal perfect-negotiation flow — tracks are never torn down.
+- **Network indicator:** the top bar shows live call quality from
+  `getStats()` polled every 2 s — Good (<150 ms RTT, <2% loss), Fair
+  (150–300 ms or 2–5%), Poor (above). Hover for raw RTT / loss / bitrate plus
+  the signaling and ICE states.
+- **Connection log:** the server appends one JSON line per
+  connect/join/close/heartbeat-terminate to `logs/connections.log`
+  (gitignored), with ISO timestamps, close code + reason, room id, and socket
+  lifetime — check here first when diagnosing disconnects.
+
 ## Testing that TURN works
 
 1. In `.env`, uncomment `FORCE_RELAY=1`.
@@ -124,5 +147,5 @@ compatibility.
 - [x] Phase 4a — screen-share tuning (bitrate cap, contentHint, tab-capture self-exclude)
 - [x] Phase 4b — sync mode (YouTube / Vimeo / direct video / TorBox)
 - [x] Phase 4c — single-window restyle, Document PiP companion, TorBox UI
-- [ ] Phase 5 — robustness
+- [x] Phase 5 — robustness (heartbeat, auto-reconnect, ICE restart, network indicator, connection log)
 - [ ] Phase 6 — polish (chat, screen audio, swap view)

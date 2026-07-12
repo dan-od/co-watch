@@ -137,6 +137,24 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+/* Network quality indicator (Phase 5) */
+#net-wrap {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--hairline);
+  cursor: default;
+  flex: none;
+}
+#net-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--dim);
+  flex: none;
+}
+#net-dot.ok { background: var(--ok); }
+#net-dot.warn { background: var(--accent); }
+#net-dot.error { background: var(--danger); }
+#net-label { color: var(--dim); font-size: 0.8rem; white-space: nowrap; }
+
 #mode-tabs { display: flex; gap: 1.25rem; }
 .tab {
   font-family: 'Space Grotesk', system-ui, sans-serif;

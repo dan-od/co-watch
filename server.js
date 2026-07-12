@@ -266,6 +266,20 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// --- Connection log (Phase 5) ------------------------------------------------
+// One JSON line per event, appended to logs/connections.log.
+
+const LOG_DIR = path.join(__dirname, 'logs');
+fs.mkdirSync(LOG_DIR, { recursive: true });
+const logStream = fs.createWriteStream(path.join(LOG_DIR, 'connections.log'), { flags: 'a' });
+
+let socketSeq = 0;
+function logConn(event, fields = {}) {
+  const line = JSON.stringify({ ts: new Date().toISOString(), event, ...fields });
+  logStream.write(line + '\n');
+  console.log(line);
+}
+
 // roomId -> Set<WebSocket> (max 2)
 const rooms = new Map();
 
@@ -284,7 +298,40 @@ function peerOf(ws) {
   return null;
 }
 
-wss.on('connection', (ws) => {
+// --- Heartbeat (Phase 5, root-cause fix) --------------------------------------
+// Cloudflare Tunnel (and some NATs) close idle WebSockets; protocol-level pings
+// every HEARTBEAT_MS keep them warm. A socket that misses two pongs in a row is
+// dead — terminate it so its peer gets a prompt peer-left instead of a zombie.
+
+const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS) || 25_000;
+
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if ((ws.missedPongs ?? 0) >= 2) {
+      logConn('heartbeat-terminate', { socket: ws.socketId, room: ws.roomId ?? null });
+      ws.terminate(); // fires 'close' → normal peer-left cleanup
+      continue;
+    }
+    ws.missedPongs = (ws.missedPongs ?? 0) + 1;
+    try {
+      ws.ping();
+    } catch {
+      // socket already going away; the close handler cleans up
+    }
+  }
+}, HEARTBEAT_MS);
+heartbeat.unref?.();
+wss.on('close', () => clearInterval(heartbeat));
+
+wss.on('connection', (ws, req) => {
+  ws.socketId = ++socketSeq;
+  ws.connectedAt = Date.now();
+  ws.missedPongs = 0;
+  ws.on('pong', () => {
+    ws.missedPongs = 0;
+  });
+  logConn('connect', { socket: ws.socketId, ip: req.socket.remoteAddress });
+
   ws.on('message', (raw) => {
     let msg;
     try {
@@ -312,6 +359,7 @@ wss.on('connection', (ws) => {
       }
       room.add(ws);
       ws.roomId = roomId;
+      logConn('join', { socket: ws.socketId, room: roomId, peers: room.size });
       send(ws, { type: 'joined', peers: room.size });
       const peer = peerOf(ws);
       if (peer) send(peer, { type: 'peer-joined' });
@@ -324,7 +372,14 @@ wss.on('connection', (ws) => {
     if (peer) send(peer, msg);
   });
 
-  ws.on('close', () => {
+  ws.on('close', (code, reason) => {
+    logConn('close', {
+      socket: ws.socketId,
+      room: ws.roomId ?? null,
+      code,
+      reason: reason?.toString() || null,
+      lifetimeMs: Date.now() - ws.connectedAt,
+    });
     const room = rooms.get(ws.roomId);
     if (!room) return;
     room.delete(ws);
