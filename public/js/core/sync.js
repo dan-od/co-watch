@@ -1,0 +1,133 @@
+// Core sync engine (Phase 4b): source detection, player lifecycle, and the
+// play/pause/seek sync protocol. Owns the single `player` instance; mode UI
+// (modes/sync.js) drives it, and remote sync events flow through applyRemoteSync.
+
+import { $ } from '../lib/dom.js';
+import { createYouTubePlayer, createVimeoPlayer, createNativePlayer } from './players.js';
+
+const SYNC_DRIFT_TOLERANCE = 0.75; // seconds — follower seeks if further off than this
+const SYNC_SUPPRESS_MS = 800; // echo-suppression window after applying a remote sync event
+
+export const UNSUPPORTED_MSG =
+  'Sync mode supports YouTube, Vimeo, direct video links, and TorBox magnets. ' +
+  'For anything else, use Share screen instead.';
+
+// ---- Sync-source detection (Phase 4b) ----
+export function detectSource(raw) {
+  const s = raw.trim();
+  if (!s) return null;
+  const btih = s.match(/^magnet:\?.*xt=urn:btih:([a-z0-9]{32,40})/i);
+  if (btih) return { kind: 'torbox', magnet: s, hash: btih[1].toLowerCase() };
+  if (/^[a-f0-9]{40}$/i.test(s)) {
+    const hash = s.toLowerCase();
+    return { kind: 'torbox', magnet: `magnet:?xt=urn:btih:${hash}`, hash };
+  }
+  let url;
+  try {
+    url = new URL(s);
+  } catch {
+    return { kind: 'unsupported' };
+  }
+  const host = url.hostname.replace(/^www\./, '').toLowerCase();
+  if (host === 'youtu.be') {
+    const id = url.pathname.slice(1).split('/')[0];
+    return id ? { kind: 'youtube', videoId: id, url: s } : { kind: 'unsupported' };
+  }
+  if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
+    const id =
+      url.searchParams.get('v') || url.pathname.match(/\/(?:embed|shorts|live)\/([\w-]{6,})/)?.[1];
+    return id ? { kind: 'youtube', videoId: id, url: s } : { kind: 'unsupported' };
+  }
+  if (host === 'vimeo.com' || host.endsWith('.vimeo.com')) {
+    return { kind: 'vimeo', url: s };
+  }
+  if (/\.(mp4|webm|m3u8)$/i.test(url.pathname)) {
+    return { kind: 'video', url: s };
+  }
+  return { kind: 'unsupported' };
+}
+
+export function createSync(ctx) {
+  let player = null;
+  let suppressUntil = 0;
+
+  async function loadSource(source) {
+    destroyPlayer();
+    const container = $('sync-player');
+    $('sync-placeholder').hidden = true;
+    const report = (action, time, rate) => {
+      if (Date.now() < suppressUntil) return;
+      ctx.signaling.signal({ type: 'sync', action, time: time ?? 0, rate: rate ?? 1 });
+    };
+    const { notice } = ctx.controls;
+    try {
+      if (source.kind === 'youtube') {
+        notice('Loading YouTube…');
+        player = await createYouTubePlayer(container, source.videoId, report);
+        notice('YouTube loaded — play/pause/seek stay in sync.', 'ok', 4000);
+      } else if (source.kind === 'vimeo') {
+        notice('Loading Vimeo…');
+        player = await createVimeoPlayer(container, source.url, report);
+        notice('Vimeo loaded — play/pause/seek stay in sync.', 'ok', 4000);
+      } else {
+        const url = source.kind === 'torbox' ? source.resolvedUrl : source.url;
+        const onError = () =>
+          notice(
+            source.kind === 'torbox'
+              ? 'This link requires your own TorBox account — paste the same magnet after adding your key.'
+              : 'Could not load this video — the host may block cross-site playback (CORS) or the format is unsupported.',
+            'error'
+          );
+        player = createNativePlayer(container, url, report, onError, () => ($('tap-to-play').hidden = false));
+        notice('Video loaded — play/pause/seek stay in sync.', 'ok', 4000);
+      }
+      $('resync').disabled = false;
+      $('tracks-btn').hidden = !player?.el; // subtitles/audio only on the native player
+    } catch (err) {
+      notice(`Could not load: ${err.message || err}`, 'error');
+      $('sync-placeholder').hidden = false;
+    }
+  }
+
+  function destroyPlayer() {
+    if (player) {
+      try {
+        player.destroy();
+      } catch {}
+      player = null;
+    }
+    $('sync-player').replaceChildren();
+    $('resync').disabled = true;
+    ctx.tracks.releaseSubs(); // hides the tracks button/panel + revokes subtitle blob URLs
+  }
+
+  async function applyRemoteSync(msg) {
+    if (!player) return;
+    suppressUntil = Date.now() + SYNC_SUPPRESS_MS;
+    const t = typeof msg.time === 'number' ? msg.time : 0;
+    try {
+      if (msg.rate) player.setRate?.(msg.rate);
+      if (msg.action === 'play') {
+        const cur = await player.getTime();
+        if (Math.abs(cur - t) > SYNC_DRIFT_TOLERANCE) player.seek(t);
+        await player.play();
+      } else if (msg.action === 'pause') {
+        await player.pause();
+        const cur = await player.getTime();
+        if (Math.abs(cur - t) > SYNC_DRIFT_TOLERANCE) player.seek(t);
+      } else if (msg.action === 'seek') {
+        player.seek(t);
+      }
+    } catch (err) {
+      console.warn('applying remote sync failed:', err);
+    }
+    suppressUntil = Date.now() + SYNC_SUPPRESS_MS;
+  }
+
+  return {
+    getPlayer: () => player,
+    loadSource,
+    destroyPlayer,
+    applyRemoteSync,
+  };
+}

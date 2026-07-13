@@ -65,7 +65,7 @@ reach the server wins.
 **Share (Mode A).** The sharer picks a tab/window via the browser picker; the
 watcher sees it live. Tuned for video: capture capped at 1080p/30fps, encoder
 favors motion (`contentHint='motion'`), sender bitrate capped (2.5 Mbps
-default — adjust `SCREEN_MAX_BITRATE` at the top of `public/app.js`). The call
+default — adjust `SCREEN_MAX_BITRATE` at the top of `public/js/modes/screen.js`). The call
 uses `selfBrowserSurface:'exclude'` so the CoWatch tab isn't offered as a
 capture source (no hall-of-mirrors) and `preferCurrentTab:false`. Share the
 **tab** playing the video, not the whole screen: smoother, can carry tab audio,
