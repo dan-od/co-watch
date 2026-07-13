@@ -4,7 +4,7 @@
     {
       "name": "cowatch",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["server.js"],
+      "runtimeArgs": ["server/server.js"],
       "port": 8080
     }
   ]
