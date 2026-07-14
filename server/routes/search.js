@@ -9,9 +9,12 @@ const { sendJson } = require('../lib/http');
 async function handleTorrentSearch(req, res, url) {
   const query = (url.searchParams.get('q') || '').trim();
   const type = (url.searchParams.get('type') || 'all').trim(); // 'all' | 'movie' | 'tv'
-  // TMDb key (user's own via header, or a server-wide one) — used to resolve a
-  // TV title to an imdb_id for EZTV. Optional; movies don't need it.
-  const tmdbKey = String(req.headers['x-tmdb-key'] || process.env.TMDB_API_KEY || '').trim();
+  // TMDb key (user's own via the x-tmdb-key header — preferred so it stays out
+  // of URLs/logs — or a ?tmdbKey= param, or a server-wide env key). Used to
+  // resolve a TV title → imdb_id + season metadata for EZTV. Movies don't need it.
+  const tmdbKey = String(
+    req.headers['x-tmdb-key'] || url.searchParams.get('tmdbKey') || process.env.TMDB_API_KEY || ''
+  ).trim();
   if (!query) {
     sendJson(res, 400, { success: false, detail: 'missing query (use ?q=)' });
     return;

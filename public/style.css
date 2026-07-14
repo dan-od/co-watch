@@ -1040,3 +1040,40 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   .mix-mute { width: 44px; height: 44px; }
   .mix-row input[type="range"] { height: 28px; }
 }
+
+/* ---- Torlink: grouped TV seasons ---- */
+.season-block {
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background: var(--panel-2);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.season-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 6px 10px;
+  cursor: pointer;
+  background: var(--panel);
+  border-bottom: 1px solid var(--hairline);
+}
+.season-header:hover { border-color: var(--accent); }
+.season-title { font-weight: 600; color: var(--text); flex: 1; }
+.season-count { color: var(--dim); font-size: 12px; }
+.season-toggle {
+  flex: none;
+  width: 26px; height: 26px;
+  padding: 0;
+  font-size: 13px; line-height: 1;
+  color: var(--dim);
+}
+.episode-list { display: flex; flex-direction: column; }
+.episode-list[hidden] { display: none; }
+.episode-list .torrent-item {
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+}
+.episode-list .torrent-item:last-child { border-bottom: none; }
