@@ -8,7 +8,7 @@ import { torboxPost, getKey } from '../lib/torbox.js';
 import { detectSource, UNSUPPORTED_MSG } from '../core/sync.js';
 
 export function createSyncMode(ctx) {
-  let sourceMode = 'url'; // 'url' | 'torbox' | 'search'
+  let sourceMode = 'url'; // 'url' | 'torbox' | 'search' | 'torlink'
 
   const { signal } = ctx.signaling;
   const notice = (text, kind, ms) => ctx.controls.notice(text, kind, ms);
@@ -20,26 +20,32 @@ export function createSyncMode(ctx) {
     $('source-url').classList.toggle('active', m === 'url');
     $('source-torbox').classList.toggle('active', m === 'torbox');
     $('source-search').classList.toggle('active', m === 'search');
+    $('source-torlink').classList.toggle('active', m === 'torlink');
     $('sync-input').placeholder =
       m === 'torbox'
         ? 'Magnet link or 40-char torrent hash'
         : m === 'search'
           ? 'Search for a movie or show…'
-          : 'YouTube / Vimeo / .mp4 URL';
-    $('sync-load').textContent = m === 'search' ? 'Search' : 'Load';
+          : m === 'torlink'
+            ? 'Search torrents by title (YTS)…'
+            : 'YouTube / Vimeo / .mp4 URL';
+    $('sync-load').textContent = m === 'search' || m === 'torlink' ? 'Search' : 'Load';
     $('file-select').hidden = true;
     $('search-panel').hidden = m !== 'search';
+    $('torlink-panel').hidden = m !== 'torlink';
     if (m === 'search') ctx.search.checkTmdbKey();
   }
   $('source-url').addEventListener('click', () => setSourceMode('url'));
   $('source-torbox').addEventListener('click', () => setSourceMode('torbox'));
   $('source-search').addEventListener('click', () => setSourceMode('search'));
+  $('source-torlink').addEventListener('click', () => setSourceMode('torlink'));
 
   $('sync-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const raw = $('sync-input').value.trim();
     if (!raw) return;
     if (sourceMode === 'search') ctx.search.runSearch(raw);
+    else if (sourceMode === 'torlink') ctx.torlink.run(raw);
     else if (sourceMode === 'torbox') loadTorbox(raw);
     else loadFromUrl(raw);
   });

@@ -25,6 +25,7 @@ try {
 
 const { iceConfig, handleIceConfig } = require('./routes/ice-config');
 const { handleTmdbSearch } = require('./routes/tmdb');
+const { handleTorrentSearch } = require('./routes/search');
 const { handleTorbox } = require('./routes/torbox');
 const { serveStatic } = require('./routes/static');
 
@@ -37,6 +38,7 @@ const server = http.createServer((req, res) => {
   const urlPath = decodeURIComponent(reqUrl.pathname);
 
   if (urlPath === '/api/tmdb/search') return handleTmdbSearch(req, res, reqUrl);
+  if (urlPath === '/api/search/torrents') return handleTorrentSearch(req, res, reqUrl);
   if (urlPath === '/ice-config') return handleIceConfig(req, res);
   if (urlPath.startsWith('/torbox/')) return handleTorbox(req, res, urlPath);
   return serveStatic(req, res, urlPath);

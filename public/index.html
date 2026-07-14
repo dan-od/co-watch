@@ -97,6 +97,20 @@
             <div id="search-results"></div>
             <div id="search-detail" hidden></div>
           </div>
+
+          <!-- Torlink: torrent search (YTS movies + EZTV TV) → TorBox resolve/stream. -->
+          <div id="torlink-panel" hidden>
+            <div id="torlink-head">
+              <select id="torlink-type" title="Filter by type">
+                <option value="all">All</option>
+                <option value="movie">Movies</option>
+                <option value="tv">TV shows</option>
+              </select>
+              <span class="hint">Cached picks stream instantly; others download to your TorBox first.</span>
+            </div>
+            <p id="torlink-status" class="hint"></p>
+            <div id="torlink-results"></div>
+          </div>
         </div>
 
         <!-- Camera tiles: partner primary; self a small toggleable thumbnail -->
@@ -144,6 +158,7 @@
           <button id="source-url" class="seg active">URL</button>
           <button id="source-torbox" class="seg">TorBox</button>
           <button id="source-search" class="seg">Search</button>
+          <button id="source-torlink" class="seg">Torlink</button>
         </div>
         <form id="sync-form">
           <input id="sync-input" placeholder="YouTube / Vimeo / .mp4 URL" autocomplete="off">

@@ -289,6 +289,66 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .result-card .card-rating { font-size: 0.7rem; color: var(--accent); }
 .result-card button { margin-top: 4px; padding: 0.3rem 0; font-size: 0.75rem; }
 
+/* Torlink (torrent search) — mirrors the search panel; a scrolling result list */
+#torlink-panel {
+  position: absolute; inset: 0;
+  z-index: 14; /* over the player while browsing */
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  overflow: hidden;
+}
+#torlink-head { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+#torlink-head select { flex: none; }
+#torlink-head .hint { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#torlink-status { margin: 0; flex: none; }
+#torlink-results { flex: 1; min-height: 0; overflow-y: auto; }
+
+.torrent-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.torrent-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0.5rem 0.6rem;
+  background: var(--panel-2);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+}
+.torrent-item:hover { border-color: var(--accent); }
+.torrent-row-head { display: flex; align-items: center; gap: 0.6rem; justify-content: space-between; }
+.torrent-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.torrent-name {
+  font-size: 0.85rem; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.torrent-meta { font-size: 0.72rem; color: var(--dim); }
+.torrent-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.torrent-actions button { padding: 0.35rem 0.7rem; font-size: 0.78rem; white-space: nowrap; }
+
+.cache-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 2px;
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  flex: none;
+  white-space: nowrap;
+}
+
+.progress-container { display: flex; align-items: center; gap: 8px; width: 100%; }
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width 0.5s ease; }
+.progress-text { font-size: 11px; color: var(--dim); min-width: 34px; text-align: right; }
+
 #search-detail {
   position: absolute; inset: 0;
   z-index: 15;
