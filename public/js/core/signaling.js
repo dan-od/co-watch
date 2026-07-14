@@ -4,6 +4,11 @@
 // dispatcher that fans work out to media / screen / sync / chat / reactions.
 
 export function createSignaling(ctx) {
+  // Stable identity (mesh Part 1): assigned by the server on first join and
+  // kept per-tab so reloads/reconnects present the same id — the server then
+  // replaces our lingering old socket instead of counting us twice, and
+  // negotiation roles derived from ids stay consistent across reconnects.
+  let selfId = sessionStorage.getItem('cowatch_peer_id') || null;
   let peerPresent = false;
   let polite = false;
   let rejected = false;
@@ -34,7 +39,9 @@ export function createSignaling(ctx) {
     ws.addEventListener('open', () => {
       reconnectAttempts = 0;
       netSignaling = 'connected';
-      signal({ type: 'join', room: ctx.roomId }); // server replies with 'room-state'
+      const join = { type: 'join', room: ctx.roomId };
+      if (selfId) join.peerId = selfId; // reconnect as ourselves, not a second person
+      signal(join); // server replies with 'room-state'
     });
 
     ws.addEventListener('message', (event) => {
@@ -79,15 +86,25 @@ export function createSignaling(ctx) {
         // Server-authoritative occupancy (Phase 5 fix): rebuild peer, role,
         // and baton state from this message on every join/reconnect/change —
         // never from pre-drop memory.
-        peerPresent = msg.peerPresent;
-        polite = msg.youAre === 'second'; // server-assigned; survives reconnects
+        selfId = msg.you || selfId;
+        if (selfId) sessionStorage.setItem('cowatch_peer_id', selfId);
+        const others = (msg.members || []).filter((m) => m?.id && m.id !== selfId);
+        peerPresent = others.length > 0;
+        // Exactly one side of each pair is polite: the lexicographically
+        // larger id. Ids are stable across reconnects, so roles are too.
+        polite = peerPresent ? selfId > others[0].id : false;
+        const shareHolder = msg.shareHolder
+          ? msg.shareHolder === selfId
+            ? 'you'
+            : 'peer'
+          : null;
         clearTimeout(peerLeftGraceTimer);
         peerLeftGraceTimer = null;
 
-        if (msg.shareHolder === 'peer') {
+        if (shareHolder === 'peer') {
           shareBaton = 'peer';
           if (ctx.screen.isSharing()) ctx.screen.stopScreenShare(); // converge: server says peer holds it
-        } else if (msg.shareHolder === 'you') {
+        } else if (shareHolder === 'you') {
           shareBaton = 'mine';
         } else if (ctx.screen.isSharing()) {
           // Still capturing but the server forgot us (our socket died

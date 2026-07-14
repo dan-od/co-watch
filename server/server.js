@@ -6,6 +6,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const { WebSocketServer } = require('ws');
 
 const ROOT = path.join(__dirname, '..');
@@ -58,7 +59,8 @@ function logConn(event, fields = {}) {
   console.log(line);
 }
 
-// roomId -> Set<WebSocket> (max 2)
+// roomId -> Set<WebSocket> (max MAX_ROOM)
+const MAX_ROOM = 2; // Part 2 (mesh) raises this to 6
 const rooms = new Map();
 
 const wss = new WebSocketServer({ server });
@@ -79,19 +81,20 @@ function peerOf(ws) {
 // The server is the single source of truth for room occupancy. Every
 // membership or baton change re-broadcasts the authoritative state to every
 // member; clients rebuild their UI from this instead of cached peer state.
-// youAre doubles as the perfect-negotiation role assignment (first=impolite,
-// second=polite) so roles stay consistent across reconnects.
+// Members are stable peer ids (the client re-presents its id on reconnect),
+// so perfect-negotiation roles derived from them survive reconnects — unlike
+// join order, which can swap when both sides drop and rejoin.
 function broadcastRoomState(room) {
-  const members = [...room]; // Set preserves insertion order
-  members.forEach((sock, i) => {
+  const members = [...room].map((s) => ({ id: s.peerId }));
+  for (const sock of room) {
     send(sock, {
       type: 'room-state',
+      you: sock.peerId,
       count: members.length,
-      youAre: i === 0 ? 'first' : 'second',
-      peerPresent: members.length === 2,
-      shareHolder: room.sharer ? (room.sharer === sock ? 'you' : 'peer') : null,
+      members,
+      shareHolder: room.sharer ? room.sharer.peerId : null,
     });
-  });
+  }
 }
 
 // --- Heartbeat (Phase 5, root-cause fix) --------------------------------------
@@ -148,15 +151,31 @@ wss.on('connection', (ws, req) => {
         room = new Set();
         rooms.set(roomId, room);
       }
-      if (room.size >= 2) {
+      // Reconnect: a client presenting the id of an existing member IS that
+      // member on a new socket (wifi blip, reload) — replace the lingering
+      // old socket BEFORE the size check, or a quick rejoin reads as a full
+      // room and the client gives up for good. (Ids only circulate via the
+      // private room link — same trust model as the message relay.)
+      const presented =
+        typeof msg.peerId === 'string' && /^[\w-]{8,64}$/.test(msg.peerId) ? msg.peerId : null;
+      const stale = presented ? [...room].find((s) => s.peerId === presented) : null;
+      if (stale) {
+        room.delete(stale);
+        if (room.sharer === stale) room.sharer = null; // a still-capturing client re-claims on room-state
+        stale.roomId = null; // its close handler must not re-touch the room
+        stale.terminate();
+        logConn('rejoin-replace', { socket: ws.socketId, replaced: stale.socketId, room: roomId });
+      }
+      if (room.size >= MAX_ROOM) {
         send(ws, { type: 'room-full' });
         ws.close();
         return;
       }
+      ws.peerId = presented || randomUUID();
       room.add(ws);
       ws.roomId = roomId;
-      logConn('join', { socket: ws.socketId, room: roomId, peers: room.size });
-      broadcastRoomState(room); // both members re-sync from the authoritative state
+      logConn('join', { socket: ws.socketId, room: roomId, peer: ws.peerId, peers: room.size });
+      broadcastRoomState(room); // everyone re-syncs from the authoritative state
       return;
     }
 
