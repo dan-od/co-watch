@@ -1,7 +1,9 @@
-// Signaling socket + room state (Phase 1/5).
-// Owns the WebSocket (with auto-reconnect), the server-authoritative room state
-// (peer presence, negotiation role, share baton), and the inbound message
-// dispatcher that fans work out to media / screen / sync / chat / reactions.
+// Signaling socket + room state (Phase 1/5, mesh Part 2).
+// Owns the WebSocket (with auto-reconnect), the server-authoritative room
+// state (member list with names, share baton), and the inbound message
+// dispatcher. Every relayed message carries a server-stamped `from`; we
+// address per-peer messages with `to`. Membership diffs drive the media
+// mesh (one connection per member) via media.syncMembers().
 
 export function createSignaling(ctx) {
   // Stable identity (mesh Part 1): assigned by the server on first join and
@@ -9,12 +11,11 @@ export function createSignaling(ctx) {
   // replaces our lingering old socket instead of counting us twice, and
   // negotiation roles derived from ids stay consistent across reconnects.
   let selfId = sessionStorage.getItem('cowatch_peer_id') || null;
-  let peerPresent = false;
-  let polite = false;
+  let members = new Map(); // peerId → { name } (others only, not self)
+  let shareHolderId = null;
   let rejected = false;
   let shareBaton = 'free'; // 'free' | 'mine' | 'peer' — one active sharer, server-arbitrated
   let netSignaling = 'connecting'; // 'connecting' | 'connected' | 'reconnecting'
-  let peerLeftGraceTimer = null; // peer-left may be a signaling blip; delay teardown
 
   // ---- Signaling socket with auto-reconnect (Phase 5) ----
   // The socket can idle out (Cloudflare tunnel) or drop on a network blip.
@@ -39,8 +40,8 @@ export function createSignaling(ctx) {
     ws.addEventListener('open', () => {
       reconnectAttempts = 0;
       netSignaling = 'connected';
-      const join = { type: 'join', room: ctx.roomId };
-      if (selfId) join.peerId = selfId; // reconnect as ourselves, not a second person
+      const join = { type: 'join', room: ctx.roomId, name: ctx.displayName };
+      if (selfId) join.peerId = selfId; // reconnect as ourselves, not another person
       signal(join); // server replies with 'room-state'
     });
 
@@ -80,31 +81,30 @@ export function createSignaling(ctx) {
     }
   });
 
+  const nameOf = (peerId) => members.get(peerId)?.name || 'Someone';
+
   async function handleSignal(msg) {
     switch (msg.type) {
       case 'room-state': {
-        // Server-authoritative occupancy (Phase 5 fix): rebuild peer, role,
-        // and baton state from this message on every join/reconnect/change —
-        // never from pre-drop memory.
+        // Server-authoritative occupancy: rebuild members, roles, and baton
+        // state from this message on every join/reconnect/change — never from
+        // pre-drop memory.
         selfId = msg.you || selfId;
         if (selfId) sessionStorage.setItem('cowatch_peer_id', selfId);
-        const others = (msg.members || []).filter((m) => m?.id && m.id !== selfId);
-        peerPresent = others.length > 0;
-        // Exactly one side of each pair is polite: the lexicographically
-        // larger id. Ids are stable across reconnects, so roles are too.
-        polite = peerPresent ? selfId > others[0].id : false;
-        const shareHolder = msg.shareHolder
-          ? msg.shareHolder === selfId
-            ? 'you'
-            : 'peer'
-          : null;
-        clearTimeout(peerLeftGraceTimer);
-        peerLeftGraceTimer = null;
+        const prev = members;
+        members = new Map();
+        for (const m of msg.members || []) {
+          if (!m?.peerId || m.isYou || m.peerId === selfId) continue;
+          members.set(m.peerId, { name: m.name || 'Someone' });
+          ctx.tiles.ensureTile(m.peerId, m.name);
+        }
+        shareHolderId = msg.shareHolder || null;
 
-        if (shareHolder === 'peer') {
+        // Baton convergence.
+        if (shareHolderId && shareHolderId !== selfId) {
           shareBaton = 'peer';
-          if (ctx.screen.isSharing()) ctx.screen.stopScreenShare(); // converge: server says peer holds it
-        } else if (shareHolder === 'you') {
+          if (ctx.screen.isSharing()) ctx.screen.stopScreenShare(); // server says someone else holds it
+        } else if (shareHolderId === selfId) {
           shareBaton = 'mine';
         } else if (ctx.screen.isSharing()) {
           // Still capturing but the server forgot us (our socket died
@@ -115,49 +115,50 @@ export function createSignaling(ctx) {
           shareBaton = 'free';
         }
 
-        if (peerPresent) {
-          ctx.controls.setStatus(ctx.controls.getMode() === 'sync' ? 'Synced' : 'Connected', 'ok');
-          await ctx.media.ensureHealthyPc();
-        } else if (ctx.media.getPc() && ctx.media.getPc().connectionState === 'connected') {
-          // Peer's socket dropped but P2P media still flows — likely just a
-          // signaling blip on their side. Grace window before teardown.
-          ctx.controls.setStatus('Your friend disconnected — waiting for them to return…', 'warn');
-          peerLeftGraceTimer = setTimeout(() => {
-            peerLeftGraceTimer = null;
-            if (!peerPresent) {
-              ctx.media.teardownPeerConnection();
-              ctx.controls.setStatus('Your friend left — waiting for them to rejoin…', 'warn');
-            }
-          }, 12_000);
-        } else {
-          // Alone with a dead (or no) peer connection — clean up rather than
-          // leaving a zombie pc endlessly attempting ICE restarts.
-          if (ctx.media.getPc()) ctx.media.teardownPeerConnection();
-          ctx.controls.setStatus('Waiting for your friend…');
+        // Mesh: connections follow membership (tiles are removed by media
+        // after its per-peer grace window, not here).
+        await ctx.media.syncMembers([...members.keys()]);
+
+        // Bring newcomers up to speed: our live share and our mute state
+        // travelled past them while they weren't in the room.
+        for (const id of members.keys()) {
+          if (prev.has(id)) continue;
+          if (ctx.screen.isSharing()) {
+            signal({ type: 'screen-share', on: true, streamId: ctx.screen.getStreamId(), to: id });
+          }
+          if (ctx.controls.getMicMuted()) signal({ type: 'mic-state', muted: true, to: id });
         }
+
+        ctx.controls.setStatus(
+          members.size
+            ? ctx.controls.getMode() === 'sync'
+              ? 'Synced'
+              : 'Connected'
+            : 'Waiting for others to join…',
+          members.size ? 'ok' : ''
+        );
         ctx.screen.updateShareButton();
         break;
       }
       case 'room-full':
         rejected = true;
-        ctx.controls.setStatus('Room is full (two people max).', 'error');
+        ctx.controls.setStatus('Room is full (six people max).', 'error');
         break;
       case 'offer':
       case 'answer':
-        if (!ctx.media.getPc()) await ctx.media.createPeerConnection();
-        await ctx.media.handleDescription(msg.sdp);
+        await ctx.media.handleDescription(msg.from, msg.sdp);
         break;
       case 'ice-candidate':
-        await ctx.media.addIceCandidate(msg.candidate);
+        await ctx.media.addIceCandidate(msg.from, msg.candidate);
         break;
       case 'screen-share':
         if (msg.on) {
-          ctx.screen.setRemoteScreenStreamId(msg.streamId);
+          ctx.screen.setRemoteScreen(msg.from, msg.streamId);
           shareBaton = 'peer'; // belt & braces alongside room-state
           ctx.screen.updateShareButton();
           ctx.controls.setMode('screen');
-        } else {
-          ctx.screen.setRemoteScreenStreamId(null);
+        } else if (ctx.screen.getRemoteSharerId() === msg.from) {
+          ctx.screen.setRemoteScreen(null, null);
           ctx.screen.clearScreen();
         }
         break;
@@ -177,7 +178,7 @@ export function createSignaling(ctx) {
         break;
       case 'share-denied':
         shareBaton = 'peer';
-        ctx.controls.notice('Your friend is already sharing.', 'warn', 4000);
+        ctx.controls.notice(`${nameOf(shareHolderId)} is already sharing.`, 'warn', 4000);
         ctx.screen.updateShareButton();
         break;
       case 'sync-load':
@@ -187,11 +188,14 @@ export function createSignaling(ctx) {
       case 'sync':
         await ctx.syncCore.applyRemoteSync(msg);
         break;
+      case 'mic-state':
+        ctx.tiles.setMuted(msg.from, !!msg.muted);
+        break;
       case 'reaction':
         ctx.reactions.showReaction(msg.emoji); // validated against the preset list inside
         break;
       case 'chat':
-        ctx.chat.appendMessage('Them', msg.text);
+        ctx.chat.appendMessage(nameOf(msg.from), msg.text);
         break;
     }
   }
@@ -199,8 +203,11 @@ export function createSignaling(ctx) {
   return {
     signal,
     isOpen: () => ws?.readyState === WebSocket.OPEN,
-    isPeerPresent: () => peerPresent,
-    isPolite: () => polite,
+    isPeerPresent: () => members.size > 0,
+    getSelfId: () => selfId,
+    getMemberIds: () => [...members.keys()],
+    getMemberName: nameOf,
+    getShareHolderId: () => shareHolderId,
     getNetSignaling: () => netSignaling,
     getShareBaton: () => shareBaton,
     setShareBaton: (v) => (shareBaton = v),
@@ -208,7 +215,6 @@ export function createSignaling(ctx) {
     dispose: () => {
       leaving = true; // stop the auto-reconnect loop
       clearTimeout(reconnectTimer);
-      clearTimeout(peerLeftGraceTimer);
       ws?.close();
     },
   };

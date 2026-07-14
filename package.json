@@ -2,7 +2,7 @@
   "name": "cowatch",
   "version": "0.1.0",
   "private": true,
-  "description": "Two-person watch-together app: WebRTC P2P with a tiny WebSocket signaling server.",
+  "description": "Watch-together app for up to six people: WebRTC mesh with a tiny WebSocket signaling server.",
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js"

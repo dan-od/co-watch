@@ -1,9 +1,9 @@
 # CoWatch
 
-Two-person "watch together" web app: WebRTC peer-to-peer camera/mic + screen
-share + synced playback, with a tiny Node + `ws` signaling server. No accounts;
-rooms are ephemeral random links. See [cowatch-prd.md](cowatch-prd.md) for the
-full spec.
+"Watch together" web app for up to six people: a WebRTC mesh (camera/mic +
+screen share + synced playback), with a tiny Node + `ws` signaling server. No
+accounts; rooms are ephemeral random links. See [cowatch-prd.md](cowatch-prd.md)
+for the full spec.
 
 The whole app is one fixed window (no page scroll): a top bar (wordmark, status
 dot, **Share / Sync** tabs, room link, TorBox settings gear), a stage (video +

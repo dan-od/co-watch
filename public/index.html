@@ -13,7 +13,7 @@
   <!-- Landing view -->
   <section id="landing" hidden>
     <h1 class="wordmark">COWATCH</h1>
-    <p>Watch something together. Create a room and send the link to one other person.</p>
+    <p>Watch something together. Create a room and send the link to up to five friends.</p>
     <button id="create-room" class="primary">Create room</button>
   </section>
 
@@ -113,20 +113,12 @@
           </div>
         </div>
 
-        <!-- Camera tiles: partner primary; self a small toggleable thumbnail -->
-        <div id="cam-tiles">
-          <div id="partner-wrap">
-            <video id="remote-video" class="cam partner" autoplay playsinline></video>
-            <button id="swap-view" title="Swap: show this camera as the main view" aria-label="Swap view">⇄</button>
-          </div>
-          <div id="self-wrap">
-            <video id="local-video" class="cam me" autoplay playsinline muted></video>
-            <button id="toggle-self" title="Hide self-view" aria-label="Hide self-view">×</button>
-          </div>
-        </div>
+        <!-- Camera grid (mesh): one tile per person, self included. Fills the
+             stage until content is live, then shrinks to a bottom strip
+             (theater). Tiles are injected by js/ui/tiles.js. -->
+        <div id="cam-grid" data-count="0"></div>
 
         <div id="reactions-layer" aria-hidden="true"></div>
-        <button id="stage-label" hidden></button>
         <p id="ptt-indicator" hidden>🎙 Speaking…</p>
         <p id="notice" class="notice" hidden></p>
         <button id="tap-to-play" hidden>Click to start video &amp; sound</button>
@@ -149,7 +141,7 @@
     <footer id="controlbar">
       <!-- Mode-specific action area -->
       <div id="action-share" class="action-area">
-        <button id="share-screen" class="primary" disabled title="Available once your friend joins">Share a tab</button>
+        <button id="share-screen" class="primary" disabled title="Available once someone joins">Share a tab</button>
         <span class="hint">Pick the tab playing the video — not your whole screen.</span>
       </div>
 
@@ -197,7 +189,7 @@
       <div id="cluster">
         <button id="ptt-hold" title="Hold to speak">Hold to talk</button>
         <button id="ptt" class="icon-btn" title="Enable push-to-talk">PTT</button>
-        <button id="popout" class="icon-btn" title="Pop partner cam + chat into a floating window">
+        <button id="popout" class="icon-btn" title="Pop cameras + chat into a floating window">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="14" rx="1"/><rect x="12" y="10" width="8" height="6" fill="currentColor" stroke="none"/></svg>
         </button>
         <button id="toggle-mic" class="icon-btn" title="Mute microphone">

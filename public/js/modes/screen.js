@@ -1,16 +1,20 @@
-// Screen share (Mode A).
-// Symmetric: either side may share, one at a time. Clicking Share claims the
-// baton from the server; capture starts only on share-granted (handled in
-// signaling). Owns the local capture stream and the remote-screen stream id.
+// Screen share (Mode A, mesh Part 2).
+// Symmetric: anyone can share, one at a time — the server-owned baton
+// arbitrates. The capture's tracks are added to EVERY peer connection (and to
+// connections created mid-share), tuned so the movie is the main event:
+// encoding/network priority 'high' + a generous bitrate, while camera senders
+// run 'low' — a congested receiver link starves cameras before the screen,
+// and audio (high) is never touched.
 
 import { $, tryPlay } from '../lib/dom.js';
+import { tuneSender } from '../core/media.js';
 
-const SCREEN_MAX_BITRATE = 2_500_000; // bps for the shared-screen video sender (Phase 4a) — adjust here
+const SCREEN_MAX_BITRATE = 2_500_000; // bps for the shared-screen video sender — adjust here
 const SCREEN_CONSTRAINTS = {
-  // Cap capture at 1080p30 (Phase 4a). selfBrowserSurface:'exclude' keeps the
-  // CoWatch tab out of the picker (no hall-of-mirrors, and the Document PiP
-  // companion stays out of a tab/window share). preferCurrentTab:false nudges
-  // toward sharing another tab. audio:true adds the "share audio" checkbox.
+  // Cap capture at 1080p30. selfBrowserSurface:'exclude' keeps the CoWatch tab
+  // out of the picker (no hall-of-mirrors, and the Document PiP companion
+  // stays out of a tab/window share). preferCurrentTab:false nudges toward
+  // sharing another tab. audio:true adds the "share audio" checkbox.
   video: { width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 30 } },
   audio: true,
   selfBrowserSurface: 'exclude',
@@ -19,7 +23,8 @@ const SCREEN_CONSTRAINTS = {
 
 export function createScreen(ctx) {
   let screenStream = null;
-  let screenSenders = [];
+  const senders = new Map(); // peerId → RTCRtpSender[] for our screen tracks
+  let remoteSharerId = null;
   let remoteScreenStreamId = null;
 
   const { signal } = ctx.signaling;
@@ -33,12 +38,12 @@ export function createScreen(ctx) {
       btn.title = '';
     } else if (ctx.signaling.getShareBaton() === 'peer') {
       btn.disabled = true;
-      btn.textContent = 'Partner is sharing';
+      btn.textContent = `${ctx.signaling.getMemberName(ctx.signaling.getShareHolderId())} is sharing`;
       btn.title = 'Only one person can share at a time';
     } else {
       btn.disabled = !ctx.signaling.isPeerPresent();
       btn.textContent = 'Share a tab';
-      btn.title = ctx.signaling.isPeerPresent() ? '' : 'Available once your friend joins';
+      btn.title = ctx.signaling.isPeerPresent() ? '' : 'Available once someone joins';
     }
   }
 
@@ -52,8 +57,7 @@ export function createScreen(ctx) {
   });
 
   async function startScreenShare() {
-    const pc = ctx.media.getPc();
-    if (!pc || screenStream) return;
+    if (screenStream) return;
     let stream;
     try {
       stream = await navigator.mediaDevices.getDisplayMedia(SCREEN_CONSTRAINTS);
@@ -65,27 +69,33 @@ export function createScreen(ctx) {
     screenStream = stream;
     const videoTrack = stream.getVideoTracks()[0];
     videoTrack.contentHint = 'motion';
-    signal({ type: 'screen-share', on: true, streamId: stream.id });
-    for (const track of stream.getTracks()) {
-      const sender = pc.addTrack(track, stream);
-      screenSenders.push(sender);
-      if (track.kind === 'video') capSenderBitrate(sender, SCREEN_MAX_BITRATE);
-    }
+    signal({ type: 'screen-share', on: true, streamId: stream.id }); // broadcast
+    for (const [peerId, pc] of ctx.media.getPcs()) addScreenTracksTo(peerId, pc);
     videoTrack.addEventListener('ended', stopScreenShare);
     showScreen(stream, true);
     showShareInfo(videoTrack);
     updateShareButton();
   }
 
-  async function capSenderBitrate(sender, bps) {
-    try {
-      const params = sender.getParameters();
-      if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-      params.encodings[0].maxBitrate = bps;
-      await sender.setParameters(params);
-    } catch (err) {
-      console.warn('could not cap screen bitrate:', err);
+  // Attach our live screen capture to one peer connection. Also called by
+  // media when a connection is created mid-share (a late joiner).
+  function addScreenTracksTo(peerId, pc) {
+    if (!screenStream || senders.has(peerId)) return;
+    const list = [];
+    for (const track of screenStream.getTracks()) {
+      const sender = pc.addTrack(track, screenStream);
+      list.push(sender);
+      // The movie holds quality as long as the link allows; audio priority is
+      // already high by default policy in media.addLocalTracks for mics — the
+      // share's own audio rides high too.
+      tuneSender(
+        sender,
+        track.kind === 'video'
+          ? { maxBitrate: SCREEN_MAX_BITRATE, priority: 'high' }
+          : { priority: 'high' }
+      );
     }
+    senders.set(peerId, list);
   }
 
   function showShareInfo(track) {
@@ -95,22 +105,24 @@ export function createScreen(ctx) {
     if (s.width && s.height) text += ` at ${s.width}×${s.height}`;
     text += '.';
     if (s.displaySurface === 'monitor')
-      text += ' Heads-up: a whole-screen share includes the popped-out partner cam. Share a tab to keep it private.';
+      text += ' Heads-up: a whole-screen share includes the popped-out cameras. Share a tab to keep them private.';
     notice(text, s.displaySurface === 'monitor' ? 'warn' : 'ok', s.displaySurface === 'monitor' ? 0 : 4000);
   }
 
   function stopScreenShare() {
     if (!screenStream) return;
-    signal({ type: 'screen-share', on: false });
-    const pc = ctx.media.getPc();
-    if (pc) {
-      for (const sender of screenSenders) {
+    signal({ type: 'screen-share', on: false }); // broadcast
+    const pcs = ctx.media.getPcs();
+    for (const [peerId, list] of senders) {
+      const pc = pcs.get(peerId);
+      if (!pc) continue;
+      for (const sender of list) {
         try {
           pc.removeTrack(sender);
         } catch {}
       }
     }
-    screenSenders = [];
+    senders.clear();
     for (const track of screenStream.getTracks()) track.stop();
     screenStream = null;
     if (ctx.signaling.getShareBaton() === 'mine') {
@@ -127,6 +139,7 @@ export function createScreen(ctx) {
     sv.srcObject = stream;
     sv.hidden = false;
     $('share-placeholder').hidden = true;
+    ctx.controls.updateLayout(); // theater: movie big, cameras shrink to a strip
     tryPlay(sv);
   }
 
@@ -135,12 +148,20 @@ export function createScreen(ctx) {
     sv.srcObject = null;
     sv.hidden = true;
     $('share-placeholder').hidden = false;
+    ctx.controls.updateLayout(); // back to the full camera grid
   }
 
   return {
     isSharing: () => !!screenStream,
+    getStreamId: () => screenStream?.id ?? null,
     getRemoteScreenStreamId: () => remoteScreenStreamId,
-    setRemoteScreenStreamId: (id) => (remoteScreenStreamId = id),
+    getRemoteSharerId: () => remoteSharerId,
+    setRemoteScreen: (sharerId, streamId) => {
+      remoteSharerId = sharerId;
+      remoteScreenStreamId = streamId;
+    },
+    addScreenTracksTo,
+    detachPeer: (peerId) => senders.delete(peerId), // its pc is closing; senders die with it
     startScreenShare,
     stopScreenShare,
     showScreen,

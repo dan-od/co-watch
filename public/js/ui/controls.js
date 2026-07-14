@@ -1,14 +1,17 @@
-// Shared UI: status/notice, mode tabs, the mic/cam/self/chat/leave cluster,
-// stage swap-view, copy-link, and autoplay recovery. Owns the current mode
-// ('screen' | 'sync') and the swapped-stage flag.
+// Shared UI: status/notice, mode tabs, the mic/cam/chat/leave cluster, the
+// grid↔theater stage layout, copy-link, and autoplay recovery. Owns the
+// current mode ('screen' | 'sync').
+//
+// Layout rule: the camera grid fills the stage until there's content — a live
+// share (either direction) or sync mode — then the stage flips to "theater":
+// content large, cameras shrink to a bottom strip. Pure CSS via .theater.
 
 import { $, tryPlay } from '../lib/dom.js';
 
 export function createControls(ctx) {
-  const elRemote = ctx.els.remote;
   let mode = 'screen'; // 'screen' | 'sync'
-  let swapped = false;
   let noticeTimer = null;
+  let lastMicSent = null; // broadcast mic-state only on change
 
   $('copy-link').addEventListener('click', async () => {
     await navigator.clipboard.writeText(location.href);
@@ -33,6 +36,12 @@ export function createControls(ctx) {
     if (autoHideMs) noticeTimer = setTimeout(() => ($('notice').hidden = true), autoHideMs);
   };
 
+  // ---- Stage layout: camera grid vs theater ----
+  function updateLayout() {
+    const theater = mode === 'sync' || !$('screen-video').hidden;
+    $('stage-main').classList.toggle('theater', theater);
+  }
+
   // ---- Mode toggle ----
   function setMode(m) {
     if (mode === m) return;
@@ -49,6 +58,7 @@ export function createControls(ctx) {
     $('sync-pane').hidden = m !== 'sync';
     $('action-share').hidden = m !== 'screen';
     $('action-sync').hidden = m !== 'sync';
+    updateLayout();
     if (ctx.signaling.isPeerPresent()) setStatus(m === 'sync' ? 'Synced' : 'Connected', 'ok');
   }
 
@@ -56,6 +66,11 @@ export function createControls(ctx) {
   $('mode-sync').addEventListener('click', () => setMode('sync'));
 
   // ---- Control cluster: mic / cam / chat / leave ----
+  function getMicMuted() {
+    const audio = ctx.media.getLocalStream()?.getAudioTracks()[0];
+    return audio ? !audio.enabled : false;
+  }
+
   function syncToggleButtons() {
     const localStream = ctx.media.getLocalStream();
     const audio = localStream?.getAudioTracks()[0];
@@ -64,6 +79,13 @@ export function createControls(ctx) {
     $('toggle-mic').title = audio && !audio.enabled ? 'Unmute microphone' : 'Mute microphone';
     $('toggle-cam').classList.toggle('off', video ? !video.enabled : false);
     $('toggle-cam').title = video && !video.enabled ? 'Turn camera on' : 'Turn camera off';
+    // Mirror our mute onto our own tile and tell the room (icon on their side).
+    const muted = getMicMuted();
+    ctx.tiles.setMuted('self', muted);
+    if (muted !== lastMicSent) {
+      lastMicSent = muted;
+      ctx.signaling.signal({ type: 'mic-state', muted });
+    }
   }
 
   $('toggle-mic').addEventListener('click', () => {
@@ -75,13 +97,6 @@ export function createControls(ctx) {
     const t = ctx.media.getLocalStream()?.getVideoTracks()[0];
     if (t) t.enabled = !t.enabled;
     syncToggleButtons();
-  });
-  // Hide/show the self-view thumbnail (partner tile always stays).
-  $('toggle-self').addEventListener('click', () => {
-    const hidden = $('cam-tiles').classList.toggle('self-hidden');
-    $('toggle-self').textContent = hidden ? 'Self' : '×';
-    $('toggle-self').title = hidden ? 'Show self-view' : 'Hide self-view';
-    $('toggle-self').setAttribute('aria-label', $('toggle-self').title);
   });
 
   $('toggle-chat').addEventListener('click', () => {
@@ -96,39 +111,15 @@ export function createControls(ctx) {
       ctx.pip.close();
       ctx.media.dispose();
       ctx.screen.dispose();
+      ctx.tiles.dispose();
     } finally {
       location.href = '/';
     }
   });
 
-  // ---- Swap view (Phase 6a) ----
-  // Local-only: each person picks what fills their own stage. Promotes the
-  // partner's camera to the main pane; the content pane shrinks to a corner
-  // tile (pure CSS via .swapped — the panes keep working untouched).
-  function setSwapped(on) {
-    if (swapped === on) return;
-    if (on && ctx.pip.getPipWindow()) return; // partner cam currently lives in the pop-out
-    swapped = on;
-    $('stage-main').classList.toggle('swapped', on);
-    if (on) {
-      elRemote.classList.add('main-cam');
-      $('stage-main').append(elRemote);
-      $('stage-label').textContent = "Showing: partner's camera — click to show shared content";
-      $('stage-label').hidden = false;
-    } else {
-      elRemote.classList.remove('main-cam');
-      $('partner-wrap').prepend(elRemote);
-      $('stage-label').hidden = true;
-    }
-    tryPlay(elRemote);
-  }
-
-  $('swap-view').addEventListener('click', () => setSwapped(true));
-  $('stage-label').addEventListener('click', () => setSwapped(false));
-
   // ---- Autoplay recovery ----
   $('tap-to-play').addEventListener('click', () => {
-    tryPlay(elRemote);
+    ctx.tiles.playAll();
     if (!$('screen-video').hidden) tryPlay($('screen-video'));
     const player = ctx.syncCore.getPlayer();
     if (player?.el) tryPlay(player.el);
@@ -139,7 +130,8 @@ export function createControls(ctx) {
     notice,
     getMode: () => mode,
     setMode,
+    updateLayout,
+    getMicMuted,
     syncToggleButtons,
-    setSwapped,
   };
 }

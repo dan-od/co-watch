@@ -60,22 +60,13 @@ function logConn(event, fields = {}) {
 }
 
 // roomId -> Set<WebSocket> (max MAX_ROOM)
-const MAX_ROOM = 2; // Part 2 (mesh) raises this to 6
+const MAX_ROOM = 6; // full mesh; reject the 7th
 const rooms = new Map();
 
 const wss = new WebSocketServer({ server });
 
 function send(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
-}
-
-function peerOf(ws) {
-  const room = rooms.get(ws.roomId);
-  if (!room) return null;
-  for (const other of room) {
-    if (other !== ws) return other;
-  }
-  return null;
 }
 
 // The server is the single source of truth for room occupancy. Every
@@ -85,13 +76,13 @@ function peerOf(ws) {
 // so perfect-negotiation roles derived from them survive reconnects — unlike
 // join order, which can swap when both sides drop and rejoin.
 function broadcastRoomState(room) {
-  const members = [...room].map((s) => ({ id: s.peerId }));
+  const list = [...room];
   for (const sock of room) {
     send(sock, {
       type: 'room-state',
       you: sock.peerId,
-      count: members.length,
-      members,
+      count: list.length,
+      members: list.map((s) => ({ peerId: s.peerId, name: s.name, isYou: s === sock })),
       shareHolder: room.sharer ? room.sharer.peerId : null,
     });
   }
@@ -172,6 +163,10 @@ wss.on('connection', (ws, req) => {
         return;
       }
       ws.peerId = presented || randomUUID();
+      ws.name =
+        String(msg.name || '')
+          .trim()
+          .slice(0, 24) || `Guest-${ws.peerId.slice(0, 4)}`;
       room.add(ws);
       ws.roomId = roomId;
       logConn('join', { socket: ws.socketId, room: roomId, peer: ws.peerId, peers: room.size });
@@ -202,10 +197,20 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    // Everything else is relayed verbatim to the other peer in the room.
+    // Everything else is relayed with a server-stamped `from` (can't be
+    // spoofed). A `to: peerId` addresses one member (offer/answer/ICE must be
+    // per-peer on a mesh); no `to` broadcasts to every other member (chat,
+    // reactions, sync, screen-share announcements, mic-state).
     if (!ws.roomId) return;
-    const peer = peerOf(ws);
-    if (peer) send(peer, msg);
+    const room = rooms.get(ws.roomId);
+    if (!room) return;
+    const out = { ...msg, from: ws.peerId };
+    delete out.to;
+    for (const other of room) {
+      if (other === ws) continue;
+      if (msg.to && other.peerId !== msg.to) continue;
+      send(other, out);
+    }
   });
 
   ws.on('close', (code, reason) => {

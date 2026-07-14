@@ -1,12 +1,14 @@
 // CoWatch client — orchestrator.
 // Routes /r/<id> into a room, wires every subsystem onto a shared context, and
 // kicks off start-up side effects. The behavior lives in the modules under
-// js/ (core = signaling/media/sync, modes = screen/sync/search, ui = controls/
-// chat/settings/reactions/ptt/pip, lib = dom/torbox). Each module is a small
-// createX(ctx) factory that owns its state and registers an API on the hub.
+// js/ (core = signaling/media/sync, modes = screen/sync/search/torlink, ui =
+// controls/tiles/chat/settings/reactions/ptt/pip, lib = dom/torbox). Each
+// module is a small createX(ctx) factory that owns its state and registers an
+// API on the hub.
 
 import { $ } from './js/lib/dom.js';
 import { createControls } from './js/ui/controls.js';
+import { createTiles } from './js/ui/tiles.js';
 import { createSignaling } from './js/core/signaling.js';
 import { createMedia } from './js/core/media.js';
 import { createNetStats } from './js/core/netstats.js';
@@ -43,27 +45,42 @@ function randomRoomId() {
   return Array.from(bytes, (b) => b.toString(36).padStart(2, '0')).join('').slice(0, 10);
 }
 
+// Display name: asked once, kept in localStorage, shown under camera tiles
+// and in "<name> is sharing" / chat labels.
+function getDisplayName() {
+  let name = (localStorage.getItem('display_name') || '').trim();
+  if (!name) {
+    if (typeof window.prompt === 'function') {
+      name = (window.prompt('Enter your name for this room:') || '').trim().slice(0, 24);
+    }
+    if (!name) name = `Guest-${Math.random().toString(36).slice(2, 6)}`;
+    localStorage.setItem('display_name', name);
+  }
+  return name;
+}
+
 function enterRoom(roomId) {
   $('room').hidden = false;
   $('room-link').value = location.href;
 
-  // Shared context hub. Siblings call across it at runtime (ctx.media.getPc(),
-  // ctx.controls.notice(), …). ctx.els are the three nodes the Document PiP
-  // companion relocates out of the main document — held as stable references so
-  // modules never re-query them by id after the move.
+  // Shared context hub. Siblings call across it at runtime (ctx.media.getPcs(),
+  // ctx.controls.notice(), …). ctx.els are the chat nodes the Document PiP
+  // companion relocates out of the main document — held as stable references
+  // so modules never re-query them by id after the move. (The camera grid is
+  // held by tiles.js the same way.)
   const ctx = {
     roomId,
+    displayName: getDisplayName(),
     els: {
-      remote: $('remote-video'),
       messages: $('messages'),
       sendForm: $('send-form'),
     },
   };
 
   // Construction only defines APIs + attaches listeners; nothing cross-module
-  // fires yet, so ordering here is not load-bearing. controls goes first only
-  // because it owns status/notice.
+  // fires yet except tiles→controls.updateLayout, so controls precedes tiles.
   ctx.controls = createControls(ctx);
+  ctx.tiles = createTiles(ctx);
   ctx.signaling = createSignaling(ctx);
   ctx.media = createMedia(ctx);
   ctx.netstats = createNetStats(ctx);
@@ -79,6 +96,8 @@ function enterRoom(roomId) {
   ctx.settings = createSettings(ctx);
   ctx.chat = createChat(ctx);
 
+  ctx.tiles.ensureTile('self', ctx.displayName); // you're always on the grid
+
   // Start-up side effects, deferred out of construction so every module's API
   // is registered before anything fires.
   ctx.signaling.start(); // connect the signaling socket + join the room
@@ -88,7 +107,18 @@ function enterRoom(roomId) {
   // Dev/debug handle (also used by automated smoke tests).
   window.__cowatch = {
     get pc() {
-      return ctx.media.getPc();
+      return ctx.media.getAnyPc(); // first peer's pc (2-person compatibility)
+    },
+    get peers() {
+      return [...ctx.media.getPcs()].map(([id, pc]) => ({
+        id,
+        name: ctx.signaling.getMemberName(id),
+        state: pc.connectionState,
+        polite: ctx.media.isPolite(id),
+      }));
+    },
+    get selfId() {
+      return ctx.signaling.getSelfId();
     },
     get player() {
       return ctx.syncCore.getPlayer();
@@ -104,9 +134,6 @@ function enterRoom(roomId) {
     },
     get shareBaton() {
       return ctx.signaling.getShareBaton();
-    },
-    get polite() {
-      return ctx.signaling.isPolite();
     },
     get peerPresent() {
       return ctx.signaling.isPeerPresent();

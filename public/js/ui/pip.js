@@ -1,12 +1,13 @@
-// Document Picture-in-Picture companion (Phase 4c).
-// Pops the partner cam + chat into a floating always-on-top window (Chrome/Edge
-// only). The moved nodes are the stable ctx.els references so the rest of the
-// app keeps addressing them after the move.
+// Document Picture-in-Picture companion (Phase 4c, mesh-aware).
+// Pops the camera grid + chat into a floating always-on-top window (Chrome/
+// Edge only). The moved nodes are stable references — tiles.js holds its own
+// grid element and chat uses ctx.els — so the rest of the app keeps working
+// while they live in the PiP document.
 
 import { $, tryPlay } from '../lib/dom.js';
 
 export function createPip(ctx) {
-  const { remote: elRemote, messages: elMessages, sendForm: elSendForm } = ctx.els;
+  const { messages: elMessages, sendForm: elSendForm } = ctx.els;
   let pipWindow = null;
   const pipSupported = 'documentPictureInPicture' in window;
   if (!pipSupported) {
@@ -20,9 +21,8 @@ export function createPip(ctx) {
       pipWindow.close();
       return;
     }
-    ctx.controls.setSwapped(false); // the partner cam is about to move into the pop-out
     try {
-      pipWindow = await documentPictureInPicture.requestWindow({ width: 300, height: 420 });
+      pipWindow = await documentPictureInPicture.requestWindow({ width: 340, height: 480 });
     } catch (err) {
       ctx.controls.notice(`Pop-out failed: ${err.message || err}`, 'warn', 5000);
       return;
@@ -44,22 +44,22 @@ export function createPip(ctx) {
       }
     }
     pipWindow.document.body.className = 'pip-body';
-    // Move the partner cam + chat into the PiP window.
-    pipWindow.document.body.append(elRemote, elMessages, elSendForm);
+    // Move the camera grid + chat into the PiP window.
+    pipWindow.document.body.append(ctx.tiles.getGridEl(), elMessages, elSendForm);
     $('popout').classList.add('active');
     $('popout').title = 'Close pop-out';
-    tryPlay(elRemote);
+    ctx.tiles.playAll();
     pipWindow.addEventListener('pagehide', restoreFromPip);
   });
 
   function restoreFromPip() {
     if (!pipWindow) return;
     // Put the moved nodes back in their original places.
-    $('partner-wrap').prepend(elRemote);
+    $('stage-main').append(ctx.tiles.getGridEl());
     $('chat-rail').append(elMessages, elSendForm);
     $('popout').classList.remove('active');
-    $('popout').title = 'Pop partner cam + chat into a floating window';
-    tryPlay(elRemote);
+    $('popout').title = 'Pop cameras + chat into a floating window';
+    ctx.tiles.playAll();
     pipWindow = null;
   }
 

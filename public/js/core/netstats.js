@@ -1,6 +1,7 @@
-// Network status indicator (Phase 5).
-// Every 2s: RTT from the selected candidate pair, packet loss + bitrate from
-// inbound-rtp deltas. Good <150ms & <2% · Fair 150–300ms or 2–5% · Poor above.
+// Network status indicator (Phase 5, mesh-aware).
+// Every 2s, aggregate across ALL peer connections: worst RTT from selected
+// candidate pairs, packet loss + total bitrate from inbound-rtp deltas.
+// Good <150ms & <2% · Fair 150–300ms or 2–5% · Poor above.
 
 import { $ } from '../lib/dom.js';
 
@@ -16,44 +17,46 @@ export function createNetStats(ctx) {
 
   async function pollNetStats() {
     const netSignaling = ctx.signaling.getNetSignaling();
-    const pc = ctx.media.getPc();
     const sigText = netSignaling === 'reconnecting' ? 'reconnecting' : 'connected';
-    const iceText = pc?.iceConnectionState ?? '—';
     if (netSignaling === 'reconnecting') {
-      renderNet('Reconnecting', 'error', `Signaling: reconnecting · ICE: ${iceText}`);
+      renderNet('Reconnecting', 'error', 'Signaling: reconnecting');
       return;
     }
-    if (!pc || pc.connectionState !== 'connected') {
-      renderNet('No call', '', `Signaling: ${sigText} · ICE: ${iceText}`);
+    const pcs = [...ctx.media.getPcs().values()].filter((pc) => pc.connectionState === 'connected');
+    if (!pcs.length) {
+      renderNet('No call', '', `Signaling: ${sigText} · no media connections`);
       prevInbound = null;
       return;
     }
-    let rttMs = null;
+    let rttMs = null; // worst link
     let recv = 0;
     let lost = 0;
     let bytes = 0;
     try {
-      const stats = await pc.getStats();
-      let pairId = null;
-      stats.forEach((r) => {
-        if (r.type === 'transport' && r.selectedCandidatePairId) pairId = r.selectedCandidatePairId;
-      });
-      stats.forEach((r) => {
-        if (
-          r.type === 'candidate-pair' &&
-          (pairId ? r.id === pairId : r.nominated && r.state === 'succeeded') &&
-          typeof r.currentRoundTripTime === 'number'
-        ) {
-          rttMs = r.currentRoundTripTime * 1000;
-        }
-        if (r.type === 'inbound-rtp') {
-          recv += r.packetsReceived || 0;
-          lost += r.packetsLost || 0;
-          bytes += r.bytesReceived || 0;
-        }
-      });
+      for (const pc of pcs) {
+        const stats = await pc.getStats();
+        let pairId = null;
+        stats.forEach((r) => {
+          if (r.type === 'transport' && r.selectedCandidatePairId) pairId = r.selectedCandidatePairId;
+        });
+        stats.forEach((r) => {
+          if (
+            r.type === 'candidate-pair' &&
+            (pairId ? r.id === pairId : r.nominated && r.state === 'succeeded') &&
+            typeof r.currentRoundTripTime === 'number'
+          ) {
+            const ms = r.currentRoundTripTime * 1000;
+            if (rttMs === null || ms > rttMs) rttMs = ms;
+          }
+          if (r.type === 'inbound-rtp') {
+            recv += r.packetsReceived || 0;
+            lost += r.packetsLost || 0;
+            bytes += r.bytesReceived || 0;
+          }
+        });
+      }
     } catch {
-      return; // pc closed mid-poll
+      return; // a pc closed mid-poll
     }
     const now = Date.now();
     let lossPct = 0;
@@ -78,8 +81,8 @@ export function createNetStats(ctx) {
     renderNet(
       quality,
       kind,
-      `RTT ${rttMs != null ? `${Math.round(rttMs)} ms` : '—'} · loss ${lossPct.toFixed(1)}% · ` +
-        `↓ ${mbps.toFixed(1)} Mbps · signaling: ${sigText} · ICE: ${iceText}`
+      `${pcs.length} link${pcs.length > 1 ? 's' : ''} · worst RTT ${rttMs != null ? `${Math.round(rttMs)} ms` : '—'} · ` +
+        `loss ${lossPct.toFixed(1)}% · ↓ ${mbps.toFixed(1)} Mbps · signaling: ${sigText}`
     );
   }
 

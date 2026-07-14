@@ -375,78 +375,85 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .placeholder p { margin: 0; line-height: 1.6; }
 .placeholder strong { color: var(--accent); }
 
-/* Camera tiles: square corners; partner primary, self a small thumbnail */
-#cam-tiles {
+/* ---- Camera grid (mesh Part 2) ----
+   Grid mode (default): the grid fills the stage — faces are the point.
+   Theater mode (#stage-main.theater — live share or sync mode): content is
+   the main event; the grid shrinks to a strip along the bottom. */
+#cam-grid {
   position: absolute;
-  right: 10px; bottom: 10px;
+  inset: 0;
   z-index: 10;
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  align-content: center;
+  grid-template-columns: 1fr;
 }
-.cam {
-  width: 148px;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
+#cam-grid[data-count="2"] { grid-template-columns: repeat(2, 1fr); }
+#cam-grid[data-count="3"],
+#cam-grid[data-count="4"] { grid-template-columns: repeat(2, 1fr); }
+#cam-grid[data-count="5"],
+#cam-grid[data-count="6"] { grid-template-columns: repeat(3, 1fr); }
+
+.tile {
+  position: relative;
   background: #000;
+  border: 1px solid var(--hairline);
   border-radius: 0; /* fully square */
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  min-height: 0;
+}
+.tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   display: block;
 }
-.cam.partner { border: 2px solid var(--accent); }
-.cam.me {
-  width: 74px; /* ~half the partner tile */
-  border: 1px solid var(--hairline);
-  opacity: 0.75;
-  transform: scaleX(-1);
-}
-
-#self-wrap, #partner-wrap { position: relative; }
-
-#swap-view {
+.tile.self video { transform: scaleX(-1); }
+.tile.speaking { outline: 2px solid var(--accent); outline-offset: -2px; } /* amber ring */
+.tile-name {
   position: absolute;
-  top: 2px; right: 2px;
-  width: 22px; height: 22px;
-  padding: 0;
-  font-size: 13px; line-height: 1;
-  background: rgba(20, 17, 9, 0.75);
-  border: 1px solid var(--hairline);
-  color: var(--dim);
+  left: 4px; bottom: 4px;
+  z-index: 2;
+  font-size: 11px;
+  color: var(--text);
+  background: rgba(20, 17, 9, 0.7);
+  padding: 1px 6px;
 }
-#swap-view:hover { color: var(--text); border-color: var(--accent); }
-
-/* ---- Swap view (Phase 6a): partner cam fills the stage, content shrinks ---- */
-.main-cam {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  object-fit: contain;
-  background: #000;
-  border: none;
-  z-index: 4;
-}
-#stage-main.swapped #screen-pane:not([hidden]),
-#stage-main.swapped #sync-pane:not([hidden]) {
-  inset: auto 10px 10px auto; /* bottom-right tile */
-  width: 240px; height: 135px;
-  z-index: 11;
-  border: 1px solid var(--accent);
-  overflow: hidden;
-  background: #000;
-}
-#stage-main.swapped #cam-tiles { right: 266px; } /* clear the content tile */
-#stage-main.swapped .placeholder { padding: 0.3rem; }
-#stage-main.swapped .placeholder p { font-size: 0.6rem; line-height: 1.3; }
-
-#stage-label {
+.tile-mic {
   position: absolute;
-  top: 10px; right: 10px;
+  top: 4px; right: 4px;
+  z-index: 2;
+  color: var(--danger); /* red mic-off icon */
+  background: rgba(20, 17, 9, 0.7);
+  padding: 3px;
+  line-height: 0;
+}
+
+/* Theater: content large, cameras a bottom strip */
+#stage-main.theater #cam-grid {
+  inset: auto 0 0 0;
+  height: 96px;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px;
   z-index: 12;
-  background: rgba(20, 17, 9, 0.88);
-  border: 1px solid var(--hairline);
-  color: var(--dim);
-  font-size: 0.75rem;
-  padding: 0.3rem 0.6rem;
+  pointer-events: none; /* don't block player controls under the strip edges */
 }
-#stage-label:hover { color: var(--text); border-color: var(--accent); }
+#stage-main.theater .tile {
+  width: 120px;
+  flex: none;
+  aspect-ratio: auto;
+  pointer-events: auto;
+  opacity: 0.92;
+}
+/* In grid mode the share pane is redundant (placeholder text) — the grid IS
+   the stage. It reappears in theater when a share is actually live. */
+#stage-main:not(.theater) #screen-pane { display: none; }
 
 /* ---- Emoji reactions (Phase 6b) ---- */
 #reactions-layer {
@@ -497,25 +504,6 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   font-size: 0.8rem;
   padding: 0.3rem 0.6rem;
 }
-#toggle-self {
-  position: absolute;
-  top: 2px; right: 2px;
-  width: 18px; height: 18px;
-  padding: 0;
-  font-size: 12px; line-height: 1;
-  background: rgba(20, 17, 9, 0.75);
-  border: 1px solid var(--hairline);
-  color: var(--dim);
-}
-#toggle-self:hover { color: var(--text); border-color: var(--accent); }
-#cam-tiles.self-hidden #local-video { display: none; }
-#cam-tiles.self-hidden #toggle-self {
-  position: static;
-  width: auto; height: auto;
-  padding: 3px 7px;
-  font-size: 11px;
-}
-
 .notice {
   position: absolute;
   left: 10px; top: 10px;
@@ -683,14 +671,16 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   font-family: system-ui, sans-serif;
   overflow: hidden;
 }
-.pip-body video {
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  background: #000;
-  border-bottom: 2px solid var(--accent);
+.pip-body #cam-grid {
+  position: static;
   flex: none;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr) !important;
+  gap: 4px;
+  padding: 4px;
+  border-bottom: 2px solid var(--accent);
 }
+.pip-body .tile { aspect-ratio: 4 / 3; }
 .pip-body #messages { flex: 1; }
 .pip-body #send-form { flex: none; }
 
@@ -704,8 +694,8 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
   }
   #room-link { width: 90px; }
-  .cam { width: 96px; }
-  .cam.me { width: 48px; }
+  #stage-main.theater .tile { width: 84px; }
+  #cam-grid { gap: 4px; padding: 4px; }
   #reaction-bar { display: none; }
   #mode-tabs { gap: 0.75rem; }
   .action-area .hint { display: none; }
