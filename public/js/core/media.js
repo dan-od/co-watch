@@ -13,8 +13,12 @@
 // send THAT person — everyone else stays crisp.
 
 import { $ } from '../lib/dom.js';
+import { isMobile } from '../lib/env.js';
 
-const CAM_MAX_BITRATE = 1_200_000; // generous ceiling — healthy links look crisp
+// Camera ceiling: generous on desktop so healthy links look crisp; phones send
+// ~600 kbps — uplink and battery matter more than pixels on a 5" screen, and
+// the Part 2 adaptive policy still scales down from there per link.
+const CAM_MAX_BITRATE = isMobile() ? 600_000 : 1_200_000;
 const CAM_CONSTRAINTS = { video: { frameRate: { max: 30 } }, audio: true };
 const PEER_GONE_GRACE_MS = 12_000; // socket-drop ≠ gone; P2P often survives the blip
 

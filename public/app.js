@@ -7,7 +7,10 @@
 // API on the hub.
 
 import { $ } from './js/lib/dom.js';
+import { isMobile } from './js/lib/env.js';
 import { createControls } from './js/ui/controls.js';
+import { createImmersive } from './js/ui/immersive.js';
+import { createMobileGuards } from './js/core/mobile.js';
 import { createTiles } from './js/ui/tiles.js';
 import { createSignaling } from './js/core/signaling.js';
 import { createMedia } from './js/core/media.js';
@@ -23,6 +26,12 @@ import { createPtt } from './js/ui/ptt.js';
 import { createPip } from './js/ui/pip.js';
 import { createSettings } from './js/ui/settings.js';
 import { createChat } from './js/ui/chat.js';
+
+// PWA: installable (standalone = no browser chrome on phones). The SW is a
+// network-passthrough — caching stays server-controlled.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 
 const roomMatch = location.pathname.match(/^\/r\/([\w-]{4,64})$/);
 
@@ -80,6 +89,7 @@ function enterRoom(roomId) {
   // Construction only defines APIs + attaches listeners; nothing cross-module
   // fires yet except tiles→controls.updateLayout, so controls precedes tiles.
   ctx.controls = createControls(ctx);
+  ctx.immersive = createImmersive(ctx);
   ctx.tiles = createTiles(ctx);
   ctx.signaling = createSignaling(ctx);
   ctx.media = createMedia(ctx);
@@ -97,6 +107,11 @@ function enterRoom(roomId) {
   ctx.chat = createChat(ctx);
 
   ctx.tiles.ensureTile('self', ctx.displayName); // you're always on the grid
+  ctx.mobileGuards = createMobileGuards(ctx); // wake lock, bg video pause, fullscreen
+
+  // Mobile: screen capture is flaky-to-impossible on phones — Sync is the
+  // primary path there. Desktop keeps Share as the default tab.
+  if (isMobile()) ctx.controls.setMode('sync');
 
   // Start-up side effects, deferred out of construction so every module's API
   // is registered before anything fires.

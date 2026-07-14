@@ -5,12 +5,15 @@
 // while they live in the PiP document.
 
 import { $, tryPlay } from '../lib/dom.js';
+import { isMobile } from '../lib/env.js';
 
 export function createPip(ctx) {
   const { messages: elMessages, sendForm: elSendForm } = ctx.els;
   let pipWindow = null;
-  const pipSupported = 'documentPictureInPicture' in window;
-  if (!pipSupported) {
+  const pipSupported = 'documentPictureInPicture' in window && !isMobile();
+  if (isMobile()) {
+    $('popout').hidden = true; // Document PiP is a desktop feature
+  } else if (!pipSupported) {
     $('popout').disabled = true;
     $('popout').title = 'Pop-out needs Chrome or Edge (Document Picture-in-Picture).';
   }

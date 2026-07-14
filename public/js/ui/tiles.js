@@ -1,10 +1,20 @@
-// Participant tile grid (mesh Part 2). One tile per person — self included —
-// with a name label, a red mic-off icon, and an amber "speaking" ring driven
-// by Web Audio levels. The grid fills the stage when nothing is shared and
-// shrinks to a bottom strip in theater mode (share live / sync mode); that
-// switch is CSS-only via #stage-main.theater (see controls.updateLayout).
+// Participant tile grid (mesh Part 2, mobile paging Part 4). One tile per
+// person — self included — with a name label, a red mic-off icon, a weak-
+// connection dot, and an amber "speaking" ring driven by Web Audio levels.
+//
+// Desktop: the full grid, everyone visible (fills the stage; theater shrinks
+// it to a bottom strip — CSS via #stage-main.theater, see controls.updateLayout).
+//
+// Mobile (pointer:coarse): active-speaker paging. At most MAX_BIG large tiles;
+// everyone else collapses to small name chips (speaking-glow + mic/weak
+// indicators). A chip speaking SUSTAINED for PROMOTE_MS swaps into a big slot
+// (the longest-silent unpinned big tile demotes) — the debounce keeps banter
+// from causing flicker. Tap a chip to promote & PIN; tap a big tile to toggle
+// its pin; pinned tiles never get swapped out. Self stays a small corner
+// thumbnail and never competes for a big slot.
 
 import { $, tryPlay } from '../lib/dom.js';
+import { isMobile } from '../lib/env.js';
 
 const MIC_OFF_SVG =
   '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">' +
@@ -12,12 +22,30 @@ const MIC_OFF_SVG =
 
 const SPEAKING_THRESHOLD = 0.045; // RMS deviation; tuned for typical mic levels
 const LEVEL_POLL_MS = 200;
+const MAX_BIG = 2; // mobile: large tiles at once
+const PROMOTE_MS = 1600; // sustained speaking before a swap (anti-flicker)
 
 export function createTiles(ctx) {
   const grid = $('cam-grid');
-  const tiles = new Map(); // key: peerId | 'self' → { root, video, nameEl, micEl, stream, source, analyser, data }
+  const chipsEl = $('cam-chips');
+  const mobile = isMobile();
+  const tiles = new Map(); // key: peerId | 'self' → tile record
   let audioCtx = null;
   let levelTimer = null;
+
+  // Mobile paging state.
+  let bigIds = []; // remote ids currently in big slots
+  const pinnedIds = new Set();
+
+  // "+N" chip: in landscape-watching the chip strip hides behind this toggle.
+  let moreBtn = null;
+  if (mobile) {
+    moreBtn = document.createElement('button');
+    moreBtn.id = 'chips-toggle';
+    moreBtn.hidden = true;
+    moreBtn.addEventListener('click', () => chipsEl.classList.toggle('open'));
+    grid.after(moreBtn);
+  }
 
   // Web Audio needs a user gesture on some browsers; resume opportunistically.
   document.addEventListener('click', () => audioCtx?.resume?.().catch(() => {}), { capture: true });
@@ -51,9 +79,37 @@ export function createTiles(ctx) {
     weakEl.hidden = true;
     root.append(video, nameEl, micEl, weakEl);
     grid.append(root);
-    t = { root, video, nameEl, micEl, weakEl, stream: null, source: null, analyser: null, data: null };
+
+    // Chip twin (mobile): name pill with the same indicators.
+    let chip = null;
+    if (mobile && key !== 'self') {
+      chip = document.createElement('button');
+      chip.className = 'chip';
+      chip.dataset.peer = key;
+      const chipName = document.createElement('span');
+      chipName.className = 'chip-name';
+      chipName.textContent = name || '…';
+      const chipMic = document.createElement('span');
+      chipMic.className = 'tile-mic';
+      chipMic.innerHTML = MIC_OFF_SVG;
+      chipMic.hidden = true;
+      const chipWeak = document.createElement('span');
+      chipWeak.className = 'tile-weak';
+      chipWeak.hidden = true;
+      chip.append(chipName, chipMic, chipWeak);
+      chip.addEventListener('click', () => promoteAndPin(key));
+      chipsEl.append(chip);
+      root.addEventListener('click', () => togglePin(key)); // tap big tile → pin
+    }
+
+    t = {
+      root, video, nameEl, micEl, weakEl, chip,
+      stream: null, source: null, analyser: null, data: null,
+      lastSpokeAt: 0, speakStart: 0,
+    };
     tiles.set(key, t);
-    updateCount();
+    if (mobile && key !== 'self' && bigIds.length < MAX_BIG) bigIds.push(key);
+    applySlots();
     return t;
   }
 
@@ -70,6 +126,7 @@ export function createTiles(ctx) {
     const t = tiles.get(key);
     if (!t || !name) return;
     t.nameEl.textContent = key === 'self' ? `${name} (you)` : name;
+    if (t.chip) t.chip.querySelector('.chip-name').textContent = name;
   }
 
   function setMuted(key, muted) {
@@ -77,7 +134,14 @@ export function createTiles(ctx) {
     if (!t) return;
     t.micEl.hidden = !muted;
     t.root.classList.toggle('muted', muted);
-    if (muted) t.root.classList.remove('speaking'); // a muted mic can't be speaking
+    if (t.chip) {
+      t.chip.querySelector('.tile-mic').hidden = !muted;
+      t.chip.classList.toggle('muted', muted);
+    }
+    if (muted) {
+      t.root.classList.remove('speaking'); // a muted mic can't be speaking
+      t.chip?.classList.remove('speaking');
+    }
   }
 
   // Weak-connection dot (driven by netstats: outbound quality-limitation).
@@ -86,6 +150,7 @@ export function createTiles(ctx) {
     if (!t) return;
     t.weakEl.hidden = !weak;
     t.root.classList.toggle('weak', weak);
+    if (t.chip) t.chip.querySelector('.tile-weak').hidden = !weak;
   }
 
   function removeTile(key) {
@@ -95,18 +160,84 @@ export function createTiles(ctx) {
       t.source?.disconnect();
     } catch {}
     t.root.remove();
+    t.chip?.remove();
     tiles.delete(key);
-    updateCount();
+    pinnedIds.delete(key);
+    const slot = bigIds.indexOf(key);
+    if (slot !== -1) {
+      bigIds.splice(slot, 1);
+      // Refill from the most recently active chip.
+      const candidates = remoteIds().filter((id) => !bigIds.includes(id));
+      candidates.sort((a, b) => (tiles.get(b).lastSpokeAt || 0) - (tiles.get(a).lastSpokeAt || 0));
+      if (candidates.length) bigIds.push(candidates[0]);
+    }
+    applySlots();
   }
 
-  function updateCount() {
-    grid.dataset.count = String(tiles.size);
+  const remoteIds = () => [...tiles.keys()].filter((k) => k !== 'self');
+
+  // ---- Mobile paging ----
+  function applySlots() {
+    if (!mobile) {
+      grid.dataset.count = String(tiles.size);
+      ctx.controls.updateLayout();
+      return;
+    }
+    for (const id of remoteIds()) {
+      const t = tiles.get(id);
+      const inBig = bigIds.includes(id);
+      t.root.hidden = !inBig; // display:none — its <video> keeps playing audio
+      t.root.classList.toggle('pinned', pinnedIds.has(id));
+      if (t.chip) t.chip.hidden = inBig;
+    }
+    const chipCount = remoteIds().length - bigIds.length;
+    if (moreBtn) {
+      moreBtn.textContent = `+${chipCount}`;
+      moreBtn.hidden = chipCount <= 0;
+      if (chipCount <= 0) chipsEl.classList.remove('open');
+    }
+    chipsEl.hidden = remoteIds().length - bigIds.length <= 0;
+    grid.dataset.count = String(bigIds.length + 1); // big tiles + self thumb
     ctx.controls.updateLayout();
   }
 
-  // ---- Active-speaker detection (amber ring) ----
-  // One AnalyserNode per stream; every LEVEL_POLL_MS compute the RMS deviation
-  // and toggle .speaking. Feature-detected: no AudioContext → no rings.
+  function promote(id) {
+    if (bigIds.includes(id)) return;
+    if (bigIds.length < MAX_BIG) {
+      bigIds.push(id);
+    } else {
+      // Demote the longest-silent unpinned big tile.
+      const demotable = bigIds.filter((b) => !pinnedIds.has(b));
+      if (!demotable.length) return; // everything pinned — no swaps
+      demotable.sort((a, b) => (tiles.get(a).lastSpokeAt || 0) - (tiles.get(b).lastSpokeAt || 0));
+      bigIds[bigIds.indexOf(demotable[0])] = id;
+    }
+    applySlots();
+  }
+
+  function promoteAndPin(id) {
+    if (!bigIds.includes(id)) {
+      if (bigIds.length >= MAX_BIG && bigIds.every((b) => pinnedIds.has(b))) {
+        // All slots pinned: the oldest pin gives way to the explicit tap.
+        const oldest = [...bigIds].sort(
+          (a, b) => (tiles.get(a).lastSpokeAt || 0) - (tiles.get(b).lastSpokeAt || 0)
+        )[0];
+        pinnedIds.delete(oldest);
+      }
+      promote(id);
+    }
+    pinnedIds.add(id);
+    applySlots();
+  }
+
+  function togglePin(id) {
+    if (!bigIds.includes(id)) return;
+    if (pinnedIds.has(id)) pinnedIds.delete(id);
+    else pinnedIds.add(id);
+    applySlots();
+  }
+
+  // ---- Active-speaker detection (amber ring + paging) ----
   function attachAnalyser(t, stream) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC || !stream?.getAudioTracks?.().length) return;
@@ -127,7 +258,8 @@ export function createTiles(ctx) {
   }
 
   function pollLevels() {
-    for (const t of tiles.values()) {
+    const now = Date.now();
+    for (const [key, t] of tiles) {
       if (!t.analyser || t.root.classList.contains('muted')) continue;
       t.analyser.getByteTimeDomainData(t.data);
       let sum = 0;
@@ -135,8 +267,19 @@ export function createTiles(ctx) {
         const d = (t.data[i] - 128) / 128;
         sum += d * d;
       }
-      const rms = Math.sqrt(sum / t.data.length);
-      t.root.classList.toggle('speaking', rms > SPEAKING_THRESHOLD);
+      const speaking = Math.sqrt(sum / t.data.length) > SPEAKING_THRESHOLD;
+      t.root.classList.toggle('speaking', speaking);
+      t.chip?.classList.toggle('speaking', speaking);
+      if (speaking) {
+        t.lastSpokeAt = now;
+        if (!t.speakStart) t.speakStart = now;
+      } else {
+        t.speakStart = 0;
+      }
+      // Debounced promotion: sustained speech from a chip earns a big slot.
+      if (mobile && key !== 'self' && !bigIds.includes(key) && t.speakStart && now - t.speakStart >= PROMOTE_MS) {
+        promote(key);
+      }
     }
   }
 

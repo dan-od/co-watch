@@ -200,6 +200,7 @@ export function createSignaling(ctx) {
         break;
       case 'chat':
         ctx.chat.appendMessage(nameOf(msg.from), msg.text);
+        ctx.immersive?.notifyChat(nameOf(msg.from), msg.text); // peek while chrome hidden
         break;
     }
   }

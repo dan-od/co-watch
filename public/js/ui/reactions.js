@@ -1,5 +1,7 @@
 // Emoji reactions (Phase 6b). Floating emojis, rate-limited to 1/s, relayed to
-// the peer and validated against the preset list on receipt.
+// the peers and validated against the preset list on receipt. On mobile the
+// emoji row collapses into a single "react" button that opens a popover
+// (CSS-gated on pointer:coarse); sending closes it.
 
 import { $ } from '../lib/dom.js';
 
@@ -8,8 +10,14 @@ const REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '🎉'];
 export function createReactions(ctx) {
   let lastReactionAt = 0;
 
+  $('react-btn').addEventListener('click', () => $('react-wrap').classList.toggle('open'));
+  document.addEventListener('click', (e) => {
+    if (!$('react-wrap').contains(e.target)) $('react-wrap').classList.remove('open');
+  });
+
   for (const btn of document.querySelectorAll('#reaction-bar button')) {
     btn.addEventListener('click', () => {
+      $('react-wrap').classList.remove('open'); // popover closes on send
       const now = Date.now();
       if (now - lastReactionAt < 1000) return; // max 1/s
       lastReactionAt = now;

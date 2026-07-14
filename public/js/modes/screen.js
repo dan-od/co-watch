@@ -30,7 +30,18 @@ export function createScreen(ctx) {
   const { signal } = ctx.signaling;
   const notice = (text, kind, ms) => ctx.controls.notice(text, kind, ms);
 
+  // Sending a share needs getDisplayMedia (iOS Safari and most mobile browsers
+  // can't). RECEIVING someone else's share still works everywhere — only the
+  // capture button goes away.
+  const canCapture = !!navigator.mediaDevices?.getDisplayMedia;
+  if (!canCapture) {
+    $('share-screen').hidden = true;
+    $('share-hint').textContent =
+      "Screen sharing isn't supported on this device — use Sync, or share from a computer.";
+  }
+
   function updateShareButton() {
+    if (!canCapture) return; // the button is hidden; nothing to update
     const btn = $('share-screen');
     if (screenStream) {
       btn.disabled = false;

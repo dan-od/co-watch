@@ -2,8 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>CoWatch</title>
+  <meta name="theme-color" content="#141109">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
@@ -117,6 +124,8 @@
              stage until content is live, then shrinks to a bottom strip
              (theater). Tiles are injected by js/ui/tiles.js. -->
         <div id="cam-grid" data-count="0"></div>
+        <!-- Mobile: everyone not in a big slot collapses to name chips -->
+        <div id="cam-chips" hidden></div>
 
         <div id="reactions-layer" aria-hidden="true"></div>
         <p id="ptt-indicator" hidden>🎙 Speaking…</p>
@@ -142,7 +151,7 @@
       <!-- Mode-specific action area -->
       <div id="action-share" class="action-area">
         <button id="share-screen" class="primary" disabled title="Available once someone joins">Share a tab</button>
-        <span class="hint">Pick the tab playing the video — not your whole screen.</span>
+        <span class="hint" id="share-hint">Pick the tab playing the video — not your whole screen.</span>
       </div>
 
       <div id="action-sync" class="action-area" hidden>
@@ -175,14 +184,17 @@
         <div id="audio-list"></div>
       </div>
 
-      <!-- Emoji reactions (Phase 6b) -->
-      <div id="reaction-bar" aria-label="Send a reaction">
-        <button data-emoji="❤️" title="Send ❤️">❤️</button>
-        <button data-emoji="😂" title="Send 😂">😂</button>
-        <button data-emoji="😮" title="Send 😮">😮</button>
-        <button data-emoji="😢" title="Send 😢">😢</button>
-        <button data-emoji="😡" title="Send 😡">😡</button>
-        <button data-emoji="🎉" title="Send 🎉">🎉</button>
+      <!-- Emoji reactions (Phase 6b; collapses to a popover on mobile) -->
+      <div id="react-wrap">
+        <button id="react-btn" class="icon-btn" title="Send a reaction" aria-label="Send a reaction">🙂</button>
+        <div id="reaction-bar" aria-label="Send a reaction">
+          <button data-emoji="❤️" title="Send ❤️">❤️</button>
+          <button data-emoji="😂" title="Send 😂">😂</button>
+          <button data-emoji="😮" title="Send 😮">😮</button>
+          <button data-emoji="😢" title="Send 😢">😢</button>
+          <button data-emoji="😡" title="Send 😡">😡</button>
+          <button data-emoji="🎉" title="Send 🎉">🎉</button>
+        </div>
       </div>
 
       <!-- Control cluster -->

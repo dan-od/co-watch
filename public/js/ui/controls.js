@@ -40,6 +40,7 @@ export function createControls(ctx) {
   function updateLayout() {
     const theater = mode === 'sync' || !$('screen-video').hidden;
     $('stage-main').classList.toggle('theater', theater);
+    ctx.immersive?.onLayoutChange(); // chrome auto-hide only applies while watching
   }
 
   // ---- Mode toggle ----
@@ -112,6 +113,7 @@ export function createControls(ctx) {
       ctx.media.dispose();
       ctx.screen.dispose();
       ctx.tiles.dispose();
+      ctx.mobileGuards?.dispose(); // release the wake lock
     } finally {
       location.href = '/';
     }

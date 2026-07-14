@@ -706,7 +706,252 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   #room-link { width: 90px; }
   #stage-main.theater .tile { width: 84px; }
   #cam-grid { gap: 4px; padding: 4px; }
-  #reaction-bar { display: none; }
   #mode-tabs { gap: 0.75rem; }
   .action-area .hint { display: none; }
+}
+
+/* ============================================================ */
+/* IMMERSIVE MODE (Part 4): chrome hides as one group, 200ms    */
+/* fade, while content is playing. Driven by js/ui/immersive.js */
+/* ============================================================ */
+#topbar, #controlbar, #cam-grid, #cam-chips, #chips-toggle {
+  transition: opacity 0.2s ease;
+}
+#room.chrome-hidden #topbar,
+#room.chrome-hidden #controlbar,
+#room.chrome-hidden #cam-grid,
+#room.chrome-hidden #cam-chips,
+#room.chrome-hidden #chips-toggle {
+  opacity: 0;
+  pointer-events: none; /* taps fall through to the stage → toggle back */
+}
+
+/* Incoming-chat peek bubble (shows while chrome is hidden) */
+#chat-peek {
+  position: absolute;
+  left: 10px; bottom: 12px;
+  z-index: 18;
+  margin: 0;
+  max-width: 72%;
+  background: rgba(20, 17, 9, 0.9);
+  border: 1px solid var(--hairline);
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#chat-peek.show { opacity: 1; }
+#chat-peek[hidden] { display: none; }
+
+/* ---- Reactions: inline row on desktop, popover when cramped ---- */
+#react-wrap { position: relative; display: flex; align-items: center; flex: none; }
+#react-btn { display: none; }
+@media (max-width: 700px), (pointer: coarse) {
+  #react-btn { display: inline-flex; }
+  #reaction-bar {
+    display: none;
+    position: absolute;
+    bottom: 54px; right: 0;
+    z-index: 31;
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    padding: 4px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  #react-wrap.open #reaction-bar { display: flex; }
+}
+
+/* ============================================================ */
+/* MOBILE (Part 4) — pointer:coarse. Desktop stays untouched.   */
+/* ============================================================ */
+@media (pointer: coarse) {
+  /* Touch targets ≥44px */
+  #cluster button, #cluster .icon-btn, #react-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  #controlbar button, .seg { min-height: 44px; }
+  #controlbar { gap: 0.5rem; }
+  #room { border: none; border-radius: 0; }
+  #room-link { display: none; } /* Copy still copies the room URL */
+
+  /* Self view: small pinned corner thumbnail — never competes for a slot */
+  .tile.self {
+    position: absolute;
+    top: 10px; right: 10px;
+    width: 96px;
+    aspect-ratio: 3 / 4;
+    z-index: 13;
+    border-color: var(--accent);
+  }
+
+  /* Name chips for everyone outside the big slots */
+  #cam-chips {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 4px 8px;
+    z-index: 11;
+  }
+  #cam-chips[hidden] { display: none; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    padding: 4px 14px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--hairline);
+    color: var(--text);
+    font-size: 0.8rem;
+    flex: none;
+  }
+  .chip[hidden] { display: none; }
+  .chip.speaking { border-color: var(--accent); box-shadow: 0 0 8px rgba(228, 166, 63, 0.55); }
+  .chip .tile-mic, .chip .tile-weak { position: static; padding: 0; background: none; }
+  .chip.muted .chip-name { color: var(--dim); }
+  #chips-toggle {
+    position: absolute;
+    z-index: 13;
+    min-width: 44px; min-height: 44px;
+    border-radius: 999px;
+    background: rgba(30, 25, 16, 0.9);
+    border: 1px solid var(--hairline);
+    color: var(--text);
+  }
+  #chips-toggle[hidden] { display: none; }
+
+  /* Chat: overlay panel, never a fixed column stealing stage space */
+  #chat-rail { position: fixed; z-index: 25; box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5); }
+
+  /* Pinned badge */
+  .tile.pinned::after {
+    content: '📌';
+    position: absolute;
+    top: 4px; left: 4px;
+    z-index: 2;
+    font-size: 12px;
+    filter: grayscale(1) brightness(1.6);
+  }
+  /* weak dot moves aside when a pin occupies the corner */
+  .tile.pinned .tile-weak { top: 26px; }
+}
+
+/* ---- PORTRAIT ---- */
+@media (pointer: coarse) and (orientation: portrait) {
+  /* Hangout: single column of tall face tiles */
+  #cam-grid[data-count] { grid-template-columns: minmax(0, 1fr); }
+  .tile { aspect-ratio: 3 / 4; }
+  #cam-grid { padding: 8px 8px 64px; } /* room for the chips strip */
+  #cam-chips { position: absolute; left: 0; right: 0; bottom: 6px; }
+  #chips-toggle { display: none; } /* portrait shows the strip inline */
+
+  /* Watching: video full-width on top, cameras a horizontal strip below */
+  #stage-main.theater { display: flex; flex-direction: column; overflow-y: auto; }
+  #stage-main.theater #screen-pane:not([hidden]),
+  #stage-main.theater #sync-pane:not([hidden]) {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    aspect-ratio: 16 / 9; /* fills the width — no side voids */
+    flex: none;
+  }
+  #stage-main.theater #cam-grid {
+    position: static;
+    inset: auto;
+    height: auto;
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding: 6px;
+    pointer-events: auto;
+  }
+  #stage-main.theater .tile { width: 38vw; aspect-ratio: 4 / 3; flex: none; }
+  #stage-main.theater .tile.self { position: absolute; width: 76px; } /* stays a corner thumb over the video */
+  #stage-main.theater #cam-chips { position: static; }
+
+  /* Chat: bottom sheet */
+  #chat-rail {
+    left: 0; right: 0; bottom: 0; top: auto;
+    width: auto;
+    height: 46dvh;
+    border-left: none;
+    border-top: 2px solid var(--accent);
+  }
+  #controlbar { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* ---- LANDSCAPE ---- */
+@media (pointer: coarse) and (orientation: landscape) {
+  /* Chrome floats over a full-bleed stage */
+  #room { display: block; height: 100dvh; }
+  #stage { display: block; height: 100dvh; }
+  #topbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 30;
+    background: rgba(20, 17, 9, 0.85);
+    border-bottom: 1px solid var(--hairline);
+  }
+  #controlbar {
+    position: fixed;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    width: auto;
+    max-width: 96vw;
+    overflow-x: auto;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: rgba(30, 25, 16, 0.92);
+    padding: 0 0.75rem;
+  }
+  #stage-main { height: 100dvh; }
+  .action-area { flex: none; }
+  #sync-input { width: 32vw; }
+
+  /* Hangout: two-across grid filling the width */
+  #cam-grid[data-count] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tile { aspect-ratio: 16 / 10; }
+  #cam-chips { position: absolute; left: 0; right: 0; bottom: 64px; }
+
+  /* Watching: video full-bleed; speakers float top-right; chips behind +N */
+  #stage-main.theater #cam-grid {
+    inset: 54px 8px auto auto;
+    height: auto;
+    width: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 0;
+    background: none;
+  }
+  #stage-main.theater .tile { width: 128px; aspect-ratio: 16 / 10; opacity: 0.95; }
+  #stage-main.theater .tile.self { position: static; width: 84px; }
+  #stage-main.theater #cam-chips {
+    display: none;
+    position: absolute;
+    top: 54px; right: 148px;
+    left: auto; bottom: auto;
+    flex-direction: column;
+    align-items: flex-end;
+    background: none;
+  }
+  #stage-main.theater #cam-chips.open { display: flex; }
+  #chips-toggle { top: 54px; right: 8px; display: block; }
+  #stage-main.theater ~ * #chips-toggle { display: block; }
+
+  /* Chat: right-side overlay sheet */
+  #chat-rail {
+    right: 0; top: 0; bottom: 0;
+    width: min(320px, 68vw);
+    border-left: 1px solid var(--hairline);
+  }
 }
