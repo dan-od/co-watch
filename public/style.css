@@ -441,6 +441,27 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   box-shadow: 0 0 6px var(--accent);
 }
 
+/* Per-person volume slider (bottom-right; name sits bottom-left, clear of it) */
+.tile-vol {
+  position: absolute;
+  right: 6px; bottom: 6px;
+  z-index: 3;
+  width: 70px; height: 16px;
+  min-width: 0;
+  margin: 0; padding: 2px 6px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(20, 17, 9, 0.6); /* legible over bright video */
+  accent-color: var(--accent);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.tile:hover .tile-vol,
+.tile:focus-within .tile-vol { opacity: 1; }
+@media (pointer: coarse) { .tile-vol { opacity: 0.9; } } /* no hover on touch */
+#stage-main.theater .tile-vol { display: none; } /* strip tiles are too small */
+
 /* Theater: content large, cameras a bottom strip */
 #stage-main.theater #cam-grid {
   inset: auto 0 0 0;

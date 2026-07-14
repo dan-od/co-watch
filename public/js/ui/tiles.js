@@ -77,7 +77,29 @@ export function createTiles(ctx) {
     weakEl.className = 'tile-weak';
     weakEl.title = 'Weak connection';
     weakEl.hidden = true;
+    // Per-person volume: adjusts THIS video element's loudness, locally only
+    // (nothing is sent to the room). Self has no slider — it's muted.
+    let volEl = null;
+    if (key !== 'self') {
+      volEl = document.createElement('input');
+      volEl.type = 'range';
+      volEl.className = 'tile-vol';
+      volEl.min = '0';
+      volEl.max = '1';
+      volEl.step = '0.05';
+      volEl.value = '1';
+      volEl.title = 'Volume';
+      volEl.setAttribute?.('aria-label', `Volume: ${name || 'participant'}`);
+      const stop = (e) => e.stopPropagation(); // dragging must not pin/toggle the tile
+      volEl.addEventListener('pointerdown', stop);
+      volEl.addEventListener('click', stop);
+      volEl.addEventListener('input', () => {
+        t.vol = Number(volEl.value);
+        t.video.volume = t.vol;
+      });
+    }
     root.append(video, nameEl, micEl, weakEl);
+    if (volEl) root.append(volEl);
     grid.append(root);
 
     // Chip twin (mobile): name pill with the same indicators.
@@ -103,7 +125,8 @@ export function createTiles(ctx) {
     }
 
     t = {
-      root, video, nameEl, micEl, weakEl, chip,
+      root, video, nameEl, micEl, weakEl, volEl, chip,
+      vol: 1,
       stream: null, source: null, analyser: null, data: null,
       lastSpokeAt: 0, speakStart: 0,
     };
@@ -118,6 +141,7 @@ export function createTiles(ctx) {
     if (t.stream === stream) return;
     t.stream = stream;
     t.video.srcObject = stream;
+    t.video.volume = t.vol ?? 1; // reapply the chosen volume to the new stream (e.g. after reconnect)
     tryPlay(t.video);
     attachAnalyser(t, stream);
   }
