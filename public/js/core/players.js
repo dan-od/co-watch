@@ -64,6 +64,7 @@ export async function createYouTubePlayer(container, videoId, report) {
     getTime: () => yt.getCurrentTime(),
     isPaused: () => yt.getPlayerState() !== YT.PlayerState.PLAYING,
     setRate: (r) => yt.setPlaybackRate(r),
+    setVolume: (x) => yt.setVolume(Math.round(Math.max(0, Math.min(1, x)) * 100)), // 0..1 → 0..100
     destroy: () => {
       clearInterval(poll);
       try {
@@ -104,6 +105,7 @@ export async function createVimeoPlayer(container, url, report) {
     getTime: () => v.getCurrentTime(),
     isPaused: () => v.getPaused(),
     setRate: (r) => v.setPlaybackRate(r).catch(() => {}),
+    setVolume: (x) => v.setVolume(Math.max(0, Math.min(1, x))).catch(() => {}),
     destroy: () => v.destroy().catch(() => {}),
   };
 }
@@ -132,6 +134,9 @@ export function createNativePlayer(container, url, report, onError, onAutoplayBl
     isPaused: () => v.paused,
     setRate: (r) => {
       v.playbackRate = r;
+    },
+    setVolume: (x) => {
+      v.volume = Math.max(0, Math.min(1, x));
     },
     destroy: () => {
       v.pause();

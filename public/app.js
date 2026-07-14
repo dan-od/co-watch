@@ -11,6 +11,7 @@ import { isMobile } from './js/lib/env.js';
 import { createControls } from './js/ui/controls.js';
 import { createImmersive } from './js/ui/immersive.js';
 import { createMobileGuards } from './js/core/mobile.js';
+import { createMixer } from './js/core/mixer.js';
 import { createTiles } from './js/ui/tiles.js';
 import { createSignaling } from './js/core/signaling.js';
 import { createMedia } from './js/core/media.js';
@@ -90,6 +91,7 @@ function enterRoom(roomId) {
   // fires yet except tiles→controls.updateLayout, so controls precedes tiles.
   ctx.controls = createControls(ctx);
   ctx.immersive = createImmersive(ctx);
+  ctx.mixer = createMixer(ctx); // one AudioContext graph — tiles route audio through it
   ctx.tiles = createTiles(ctx);
   ctx.signaling = createSignaling(ctx);
   ctx.media = createMedia(ctx);
@@ -118,6 +120,7 @@ function enterRoom(roomId) {
   ctx.signaling.start(); // connect the signaling socket + join the room
   ctx.media.start(); // acquire camera/mic
   ctx.netstats.start(); // begin polling the connection-quality indicator
+  ctx.mixer.resume(); // best-effort: unlock the AudioContext (also retried on first gesture)
 
   // Dev/debug handle (also used by automated smoke tests).
   window.__cowatch = {

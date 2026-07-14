@@ -459,7 +459,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 }
 .tile:hover .tile-vol,
 .tile:focus-within .tile-vol { opacity: 1; }
-@media (pointer: coarse) { .tile-vol { opacity: 0.9; } } /* no hover on touch */
+@media (pointer: coarse) { .tile-vol { display: none; } } /* mobile: long-press the tile for its mixer controls */
 #stage-main.theater .tile-vol { display: none; } /* strip tiles are too small */
 
 /* Theater: content large, cameras a bottom strip */
@@ -975,4 +975,68 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
     width: min(320px, 68vw);
     border-left: 1px solid var(--hairline);
   }
+}
+
+/* ---- Audio mixer panel ---- */
+#mixer-panel {
+  position: absolute;
+  right: 0.75rem; bottom: 70px;
+  z-index: 30;
+  width: 280px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+#mixer-panel[hidden] { display: none; }
+#mixer-panel h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-family: 'Space Grotesk', sans-serif;
+  color: var(--accent);
+}
+.mix-people-head {
+  font-size: 0.75rem;
+  color: var(--dim);
+  border-top: 1px solid var(--hairline);
+  padding-top: 0.5rem;
+}
+#mixer-empty { margin: 0; }
+#mixer-people { display: flex; flex-direction: column; gap: 0.4rem; }
+.mix-row { display: flex; align-items: center; gap: 0.5rem; }
+.mix-row .mix-name {
+  flex: none;
+  width: 70px;
+  font-size: 0.8rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mix-row.mix-fixed .mix-name { color: var(--accent); font-weight: 600; }
+.mix-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--accent);
+}
+.mix-row.muted .mix-name { color: var(--dim); text-decoration: line-through; }
+.mix-mute {
+  flex: none;
+  width: 30px; height: 30px;
+  padding: 0;
+  font-size: 13px; line-height: 1;
+  background: transparent;
+}
+
+@media (pointer: coarse) {
+  #mixer-panel { left: 8px; right: 8px; width: auto; bottom: 76px; max-height: 52vh; }
+  .mix-mute { width: 44px; height: 44px; }
+  .mix-row input[type="range"] { height: 28px; }
 }

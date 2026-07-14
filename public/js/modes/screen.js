@@ -146,10 +146,17 @@ export function createScreen(ctx) {
 
   function showScreen(stream, mine) {
     const sv = $('screen-video');
-    sv.muted = mine;
     sv.srcObject = stream;
     sv.hidden = false;
     $('share-placeholder').hidden = true;
+    if (mine) {
+      sv.muted = true; // never echo our own capture
+    } else if (ctx.mixer.isActive()) {
+      sv.muted = true; // the shared audio comes through the mixer's media gain
+      ctx.mixer.attachMediaStream(stream);
+    } else {
+      sv.muted = false; // passive fallback: the element plays the audio itself
+    }
     ctx.controls.updateLayout(); // theater: movie big, cameras shrink to a strip
     tryPlay(sv);
   }
@@ -159,6 +166,7 @@ export function createScreen(ctx) {
     sv.srcObject = null;
     sv.hidden = true;
     $('share-placeholder').hidden = false;
+    ctx.mixer.detachMediaStream();
     ctx.controls.updateLayout(); // back to the full camera grid
   }
 

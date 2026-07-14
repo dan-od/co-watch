@@ -30,7 +30,6 @@ export function createTiles(ctx) {
   const chipsEl = $('cam-chips');
   const mobile = isMobile();
   const tiles = new Map(); // key: peerId | 'self' → tile record
-  let audioCtx = null;
   let levelTimer = null;
 
   // Mobile paging state.
@@ -46,9 +45,6 @@ export function createTiles(ctx) {
     moreBtn.addEventListener('click', () => chipsEl.classList.toggle('open'));
     grid.after(moreBtn);
   }
-
-  // Web Audio needs a user gesture on some browsers; resume opportunistically.
-  document.addEventListener('click', () => audioCtx?.resume?.().catch(() => {}), { capture: true });
 
   function ensureTile(key, name) {
     let t = tiles.get(key);
@@ -79,24 +75,22 @@ export function createTiles(ctx) {
     weakEl.hidden = true;
     // Per-person volume: adjusts THIS video element's loudness, locally only
     // (nothing is sent to the room). Self has no slider — it's muted.
+    // Per-person volume slider (desktop; mobile uses the long-press menu). The
+    // mixer binds its input handler in attachPerson — it owns the audio level.
     let volEl = null;
     if (key !== 'self') {
       volEl = document.createElement('input');
       volEl.type = 'range';
       volEl.className = 'tile-vol';
       volEl.min = '0';
-      volEl.max = '1';
-      volEl.step = '0.05';
-      volEl.value = '1';
+      volEl.max = '100';
+      volEl.step = '5';
+      volEl.value = '100';
       volEl.title = 'Volume';
       volEl.setAttribute?.('aria-label', `Volume: ${name || 'participant'}`);
       const stop = (e) => e.stopPropagation(); // dragging must not pin/toggle the tile
       volEl.addEventListener('pointerdown', stop);
       volEl.addEventListener('click', stop);
-      volEl.addEventListener('input', () => {
-        t.vol = Number(volEl.value);
-        t.video.volume = t.vol;
-      });
     }
     root.append(video, nameEl, micEl, weakEl);
     if (volEl) root.append(volEl);
@@ -121,12 +115,31 @@ export function createTiles(ctx) {
       chip.append(chipName, chipMic, chipWeak);
       chip.addEventListener('click', () => promoteAndPin(key));
       chipsEl.append(chip);
-      root.addEventListener('click', () => togglePin(key)); // tap big tile → pin
+      // Tap big tile → pin; long-press → open this person's mixer controls.
+      let lpTimer = null;
+      let lp = false;
+      root.addEventListener('pointerdown', () => {
+        lp = false;
+        lpTimer = setTimeout(() => {
+          lp = true;
+          ctx.mixer.openPanel(key);
+        }, 500);
+      });
+      for (const ev of ['pointerup', 'pointerleave', 'pointercancel', 'pointermove']) {
+        root.addEventListener(ev, () => clearTimeout(lpTimer));
+      }
+      root.addEventListener('click', () => {
+        if (lp) {
+          lp = false;
+          return;
+        }
+        togglePin(key);
+      });
     }
 
     t = {
       root, video, nameEl, micEl, weakEl, volEl, chip,
-      vol: 1,
+      name: name || (key === 'self' ? 'You' : 'Someone'),
       stream: null, source: null, analyser: null, data: null,
       lastSpokeAt: 0, speakStart: 0,
     };
@@ -141,7 +154,13 @@ export function createTiles(ctx) {
     if (t.stream === stream) return;
     t.stream = stream;
     t.video.srcObject = stream;
-    t.video.volume = t.vol ?? 1; // reapply the chosen volume to the new stream (e.g. after reconnect)
+    if (key === 'self') {
+      t.video.muted = true; // never monitor our own mic
+    } else {
+      // Route this person's audio through the mixer (mutes the element and
+      // takes its audio through a GainNode, or sets element volume if passive).
+      ctx.mixer.attachPerson(key, stream, t.video, t.name, t.volEl);
+    }
     tryPlay(t.video);
     attachAnalyser(t, stream);
   }
@@ -149,8 +168,10 @@ export function createTiles(ctx) {
   function setName(key, name) {
     const t = tiles.get(key);
     if (!t || !name) return;
+    t.name = name;
     t.nameEl.textContent = key === 'self' ? `${name} (you)` : name;
     if (t.chip) t.chip.querySelector('.chip-name').textContent = name;
+    if (key !== 'self') ctx.mixer.setPersonName(key, name);
   }
 
   function setMuted(key, muted) {
@@ -183,6 +204,7 @@ export function createTiles(ctx) {
     try {
       t.source?.disconnect();
     } catch {}
+    if (key !== 'self') ctx.mixer.detachPerson(key);
     t.root.remove();
     t.chip?.remove();
     tiles.delete(key);
@@ -262,11 +284,12 @@ export function createTiles(ctx) {
   }
 
   // ---- Active-speaker detection (amber ring + paging) ----
+  // Uses the mixer's single AudioContext; the analyser is a non-outputting tap
+  // (safe for self too — nothing routes to the speakers here).
   function attachAnalyser(t, stream) {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC || !stream?.getAudioTracks?.().length) return;
+    const audioCtx = ctx.mixer.getContext();
+    if (!audioCtx || !stream?.getAudioTracks?.().length) return;
     try {
-      audioCtx = audioCtx || new AC();
       try {
         t.source?.disconnect();
       } catch {}
@@ -322,7 +345,7 @@ export function createTiles(ctx) {
     dispose: () => {
       clearInterval(levelTimer);
       levelTimer = null;
-      audioCtx?.close?.().catch(() => {});
+      // the AudioContext belongs to the mixer; it closes it in its own dispose
     },
   };
 }

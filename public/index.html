@@ -184,6 +184,22 @@
         <div id="audio-list"></div>
       </div>
 
+      <!-- Audio mixer (Part: per-person + movie + master volume) -->
+      <div id="mixer-panel" hidden>
+        <h3>Audio mixer</h3>
+        <div class="mix-row mix-fixed">
+          <span class="mix-name">Master</span>
+          <input id="mix-master" type="range" min="0" max="100" aria-label="Master volume">
+        </div>
+        <div class="mix-row mix-fixed">
+          <span class="mix-name">Movie</span>
+          <input id="mix-media" type="range" min="0" max="100" aria-label="Movie volume">
+        </div>
+        <div class="mix-people-head">People</div>
+        <p id="mixer-empty" class="hint">No one else here yet.</p>
+        <div id="mixer-people"></div>
+      </div>
+
       <!-- Emoji reactions (Phase 6b; collapses to a popover on mobile) -->
       <div id="react-wrap">
         <button id="react-btn" class="icon-btn" title="Send a reaction" aria-label="Send a reaction">🙂</button>
@@ -209,6 +225,9 @@
         </button>
         <button id="toggle-cam" class="icon-btn" title="Turn camera off">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="13" height="12" rx="1"/><path d="M15 10l7-4v12l-7-4"/></svg>
+        </button>
+        <button id="mixer-btn" class="icon-btn" title="Audio mixer" aria-label="Audio mixer">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
         </button>
         <button id="toggle-chat" class="icon-btn active" title="Hide chat">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

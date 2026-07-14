@@ -113,6 +113,7 @@ export function createControls(ctx) {
       ctx.media.dispose();
       ctx.screen.dispose();
       ctx.tiles.dispose();
+      ctx.mixer.dispose();
       ctx.mobileGuards?.dispose(); // release the wake lock
     } finally {
       location.href = '/';
