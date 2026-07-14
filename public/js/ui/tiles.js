@@ -45,9 +45,13 @@ export function createTiles(ctx) {
     micEl.className = 'tile-mic';
     micEl.innerHTML = MIC_OFF_SVG; // static trusted markup
     micEl.hidden = true;
-    root.append(video, nameEl, micEl);
+    const weakEl = document.createElement('span');
+    weakEl.className = 'tile-weak';
+    weakEl.title = 'Weak connection';
+    weakEl.hidden = true;
+    root.append(video, nameEl, micEl, weakEl);
     grid.append(root);
-    t = { root, video, nameEl, micEl, stream: null, source: null, analyser: null, data: null };
+    t = { root, video, nameEl, micEl, weakEl, stream: null, source: null, analyser: null, data: null };
     tiles.set(key, t);
     updateCount();
     return t;
@@ -74,6 +78,14 @@ export function createTiles(ctx) {
     t.micEl.hidden = !muted;
     t.root.classList.toggle('muted', muted);
     if (muted) t.root.classList.remove('speaking'); // a muted mic can't be speaking
+  }
+
+  // Weak-connection dot (driven by netstats: outbound quality-limitation).
+  function setWeak(key, weak) {
+    const t = tiles.get(key);
+    if (!t) return;
+    t.weakEl.hidden = !weak;
+    t.root.classList.toggle('weak', weak);
   }
 
   function removeTile(key) {
@@ -134,6 +146,7 @@ export function createTiles(ctx) {
     setSelfStream: (stream) => setStream('self', stream),
     setName,
     setMuted,
+    setWeak,
     removeTile,
     getGridEl: () => grid, // the PiP companion relocates the whole grid
     playAll: () => {

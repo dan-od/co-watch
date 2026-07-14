@@ -127,6 +127,7 @@ export function createSignaling(ctx) {
             signal({ type: 'screen-share', on: true, streamId: ctx.screen.getStreamId(), to: id });
           }
           if (ctx.controls.getMicMuted()) signal({ type: 'mic-state', muted: true, to: id });
+          if (ctx.netstats.isSelfWeak()) signal({ type: 'net-weak', weak: true, to: id });
         }
 
         ctx.controls.setStatus(
@@ -190,6 +191,9 @@ export function createSignaling(ctx) {
         break;
       case 'mic-state':
         ctx.tiles.setMuted(msg.from, !!msg.muted);
+        break;
+      case 'net-weak':
+        ctx.netstats.setRemoteWeak(msg.from, !!msg.weak);
         break;
       case 'reaction':
         ctx.reactions.showReaction(msg.emoji); // validated against the preset list inside

@@ -35,7 +35,13 @@ function serveStatic(req, res, urlPath) {
       res.end('Not found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream',
+      // Revalidate every load: the client is many ES modules + CSS that must
+      // come from the SAME deploy — a cached old style.css alongside new JS
+      // breaks layout (e.g. cameras covering the stage during a share).
+      'Cache-Control': 'no-cache',
+    });
     res.end(data);
   });
 }

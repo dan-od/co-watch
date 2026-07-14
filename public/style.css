@@ -387,13 +387,14 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   gap: 8px;
   padding: 8px;
   align-content: center;
-  grid-template-columns: 1fr;
+  justify-content: center; /* capped tiles stay centered, never wall-to-wall */
+  grid-template-columns: minmax(0, 560px);
 }
-#cam-grid[data-count="2"] { grid-template-columns: repeat(2, 1fr); }
+#cam-grid[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 480px)); }
 #cam-grid[data-count="3"],
-#cam-grid[data-count="4"] { grid-template-columns: repeat(2, 1fr); }
+#cam-grid[data-count="4"] { grid-template-columns: repeat(2, minmax(0, 440px)); }
 #cam-grid[data-count="5"],
-#cam-grid[data-count="6"] { grid-template-columns: repeat(3, 1fr); }
+#cam-grid[data-count="6"] { grid-template-columns: repeat(3, minmax(0, 380px)); }
 
 .tile {
   position: relative;
@@ -429,6 +430,15 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   background: rgba(20, 17, 9, 0.7);
   padding: 3px;
   line-height: 0;
+}
+.tile-weak {
+  position: absolute;
+  top: 7px; left: 7px;
+  z-index: 2;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent); /* amber: informational, not an error */
+  box-shadow: 0 0 6px var(--accent);
 }
 
 /* Theater: content large, cameras a bottom strip */
