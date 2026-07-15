@@ -105,6 +105,25 @@
             <div id="search-detail" hidden></div>
           </div>
 
+          <!-- Stremio: add-on catalogs / TMDb discovery → add-on streams → play. -->
+          <div id="stremio-panel" hidden>
+            <div id="stremio-head">
+              <input id="stremio-url" placeholder="Stremio add-on URL (…/manifest.json)" autocomplete="off">
+              <button id="stremio-load" class="ghost">Load</button>
+              <select id="stremio-catalog" hidden></select>
+              <span id="stremio-addon" class="hint"></span>
+            </div>
+            <div id="stremio-se" hidden>
+              <button id="stremio-back" class="ghost">← Back</button>
+              <span id="stremio-se-title" class="hint"></span>
+              <label class="se-field">S<input id="stremio-season" type="number" min="0" value="1"></label>
+              <label class="se-field">E<input id="stremio-episode" type="number" min="1" value="1"></label>
+              <button id="stremio-get" class="primary">Get streams</button>
+            </div>
+            <p id="stremio-status" class="hint"></p>
+            <div id="stremio-results"></div>
+          </div>
+
           <!-- Torlink: torrent search (YTS movies + EZTV TV) → TorBox resolve/stream. -->
           <div id="torlink-panel" hidden>
             <div id="torlink-head">
@@ -160,6 +179,7 @@
           <button id="source-torbox" class="seg">TorBox</button>
           <button id="source-search" class="seg">Search</button>
           <button id="source-torlink" class="seg">Torlink</button>
+          <button id="source-stremio" class="seg">Stremio</button>
         </div>
         <form id="sync-form">
           <input id="sync-input" placeholder="YouTube / Vimeo / .mp4 URL" autocomplete="off">

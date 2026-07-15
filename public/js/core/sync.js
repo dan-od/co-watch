@@ -70,12 +70,14 @@ export function createSync(ctx) {
         player = await createVimeoPlayer(container, source.url, report);
         notice('Vimeo loaded — play/pause/seek stay in sync.', 'ok', 4000);
       } else {
-        const url = source.kind === 'torbox' ? source.resolvedUrl : source.url;
+        const url = source.kind === 'torbox' || source.kind === 'stremio' ? source.resolvedUrl : source.url;
         const onError = () =>
           notice(
             source.kind === 'torbox'
               ? 'This link requires your own TorBox account — paste the same magnet after adding your key.'
-              : 'Could not load this video — the host may block cross-site playback (CORS) or the format is unsupported.',
+              : source.kind === 'stremio'
+                ? 'This stream needs your own Stremio add-on — open Sync → Stremio and load your add-on.'
+                : 'Could not load this video — the host may block cross-site playback (CORS) or the format is unsupported.',
             'error'
           );
         player = createNativePlayer(container, url, report, onError, () => ($('tap-to-play').hidden = false));

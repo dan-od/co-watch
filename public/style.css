@@ -1077,3 +1077,31 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   background: transparent;
 }
 .episode-list .torrent-item:last-child { border-bottom: none; }
+
+/* ---- Stremio panel ---- */
+#stremio-panel {
+  position: absolute; inset: 0;
+  z-index: 14;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  overflow: hidden;
+}
+#stremio-head { display: flex; align-items: center; gap: 0.5rem; flex: none; flex-wrap: wrap; }
+#stremio-url { flex: 1; min-width: 140px; }
+#stremio-catalog { flex: none; max-width: 220px; }
+#stremio-addon { flex: none; color: var(--ok); }
+#stremio-se { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+#stremio-se-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.se-field { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8rem; color: var(--dim); }
+.se-field input { width: 56px; }
+#stremio-status { margin: 0; flex: none; }
+#stremio-results { flex: 1; min-height: 0; overflow-y: auto; }
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 0.6rem;
+  align-content: start;
+}

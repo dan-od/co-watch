@@ -22,6 +22,7 @@ import { createScreen } from './js/modes/screen.js';
 import { createSyncMode } from './js/modes/sync.js';
 import { createSearch } from './js/modes/search.js';
 import { createTorlink } from './js/modes/torlink.js';
+import { createStremio } from './js/modes/stremio.js';
 import { createReactions } from './js/ui/reactions.js';
 import { createPtt } from './js/ui/ptt.js';
 import { createPip } from './js/ui/pip.js';
@@ -102,6 +103,7 @@ function enterRoom(roomId) {
   ctx.syncMode = createSyncMode(ctx);
   ctx.search = createSearch(ctx);
   ctx.torlink = createTorlink(ctx);
+  ctx.stremio = createStremio(ctx);
   ctx.reactions = createReactions(ctx);
   ctx.ptt = createPtt(ctx);
   ctx.pip = createPip(ctx);

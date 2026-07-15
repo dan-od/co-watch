@@ -21,6 +21,7 @@ export function createSyncMode(ctx) {
     $('source-torbox').classList.toggle('active', m === 'torbox');
     $('source-search').classList.toggle('active', m === 'search');
     $('source-torlink').classList.toggle('active', m === 'torlink');
+    $('source-stremio').classList.toggle('active', m === 'stremio');
     $('sync-input').placeholder =
       m === 'torbox'
         ? 'Magnet link or 40-char torrent hash'
@@ -28,17 +29,22 @@ export function createSyncMode(ctx) {
           ? 'Search for a movie or show…'
           : m === 'torlink'
             ? 'Search torrents by title (YTS)…'
-            : 'YouTube / Vimeo / .mp4 URL';
-    $('sync-load').textContent = m === 'search' || m === 'torlink' ? 'Search' : 'Load';
+            : m === 'stremio'
+              ? 'Search a title…'
+              : 'YouTube / Vimeo / .mp4 URL';
+    $('sync-load').textContent = m === 'search' || m === 'torlink' || m === 'stremio' ? 'Search' : 'Load';
     $('file-select').hidden = true;
     $('search-panel').hidden = m !== 'search';
     $('torlink-panel').hidden = m !== 'torlink';
+    $('stremio-panel').hidden = m !== 'stremio';
     if (m === 'search') ctx.search.checkTmdbKey();
+    if (m === 'stremio') ctx.stremio.activate();
   }
   $('source-url').addEventListener('click', () => setSourceMode('url'));
   $('source-torbox').addEventListener('click', () => setSourceMode('torbox'));
   $('source-search').addEventListener('click', () => setSourceMode('search'));
   $('source-torlink').addEventListener('click', () => setSourceMode('torlink'));
+  $('source-stremio').addEventListener('click', () => setSourceMode('stremio'));
 
   $('sync-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -46,6 +52,7 @@ export function createSyncMode(ctx) {
     if (!raw) return;
     if (sourceMode === 'search') ctx.search.runSearch(raw);
     else if (sourceMode === 'torlink') ctx.torlink.run(raw);
+    else if (sourceMode === 'stremio') ctx.stremio.run(raw);
     else if (sourceMode === 'torbox') loadTorbox(raw);
     else loadFromUrl(raw);
   });
@@ -69,6 +76,22 @@ export function createSyncMode(ctx) {
   }
 
   async function handleRemoteLoad(source) {
+    if (source.kind === 'stremio') {
+      // Re-resolve from OUR own add-on (add-on URLs are debrid/IP-locked).
+      const url = await ctx.stremio.resolveForPeer(source);
+      if (url) {
+        ctx.tracks.setTorrentSubs(null);
+        await loadSource({ ...source, resolvedUrl: url });
+        return;
+      }
+      if (source.resolvedUrl) {
+        ctx.tracks.setTorrentSubs(null);
+        await loadSource(source); // last resort: the sharer's URL (may be IP-locked)
+        return;
+      }
+      notice('Load your Stremio add-on (Sync → Stremio) to follow this stream.', 'warn');
+      return;
+    }
     if (source.kind === 'torbox') {
       const myKey = getKey();
       if (myKey) {
