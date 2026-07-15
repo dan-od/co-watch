@@ -26,6 +26,16 @@ export function createImmersive(ctx) {
 
   const isWatching = () => $('stage-main').classList.contains('theater');
 
+  // Someone actively editing (typing a URL/search/chat, picking a file) is NOT
+  // idle — auto-hide must never yank the control bar out from under them. A
+  // focused text field / select / contenteditable counts as "still working".
+  const isEditing = () => {
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
+  };
+
   // Chat peek bubble (lives on the stage, outside the chrome group).
   const peekEl = document.createElement('p');
   peekEl.id = 'chat-peek';
@@ -41,7 +51,12 @@ export function createImmersive(ctx) {
   function arm() {
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      if (isWatching()) setHidden(true);
+      if (!isWatching()) return;
+      if (isEditing()) {
+        arm(); // still typing/selecting — keep chrome up, re-check after the interval
+        return;
+      }
+      setHidden(true);
     }, HIDE_AFTER_MS);
   }
 
@@ -64,7 +79,7 @@ export function createImmersive(ctx) {
   const isControl = (el) =>
     !!el?.closest?.(
       'button, input, select, a, label, .tile, .chip, #chat-rail, #controlbar, #topbar, ' +
-        '#tracks-panel, #settings-panel, #search-panel, #torlink-panel, #chat-peek'
+        '#tracks-panel, #settings-panel, #search-panel, #torlink-panel, #stremio-panel, #chat-peek'
     );
 
   // Tap on the stage: empty stage/video toggles; controls only reset the timer.
@@ -92,6 +107,14 @@ export function createImmersive(ctx) {
   // Any interaction anywhere (typing in chat, pressing controls) re-arms.
   window.addEventListener('pointerdown', () => {
     if (!hidden) arm();
+  }, true);
+
+  // Keystrokes are activity too — without this, typing with no mouse movement
+  // let the idle timer fire and hid the control bar mid-input.
+  window.addEventListener('keydown', () => {
+    if (!isWatching()) return;
+    if (hidden) show();
+    else arm();
   }, true);
 
   // Incoming chat while chrome is hidden → 3s peek bubble.
