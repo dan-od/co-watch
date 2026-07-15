@@ -424,9 +424,21 @@ export function createStremio(ctx) {
     const container = $('stremio-results');
     container.replaceChildren();
     if (!streams.length) { emptyMsg(container, 'No streams available for this title.'); return; }
+    // Prefer browser-playable audio: float AAC/Opus streams up and sink
+    // DTS/TrueHD/Atmos (which play silently in-browser) down. Stable sort keeps
+    // the add-on's quality order within each compatibility tier.
+    const ranked = streams.map((s, i) => ({ s, i, r: audioRank(s) }));
+    ranked.sort((a, b) => a.r - b.r || a.i - b.i);
+    const risky = ranked.filter((x) => x.r === 2).length;
+    if (risky && risky < ranked.length) {
+      const tip = document.createElement('p');
+      tip.className = 'hint';
+      tip.textContent = `${risky} stream${risky === 1 ? '' : 's'} use lossless audio (DTS/TrueHD/Atmos) that plays silently in a browser — those are marked ⚠ and sorted last.`;
+      container.append(tip);
+    }
     const list = document.createElement('div');
     list.className = 'torrent-list';
-    for (const stream of streams) list.append(buildStreamRow(stream, meta));
+    for (const { s } of ranked) list.append(buildStreamRow(s, meta));
     container.append(list);
   }
 
@@ -445,6 +457,7 @@ export function createStremio(ctx) {
     info.append(nm);
 
     const tags = parseTags(stream);
+    if (audioRank(stream) === 2) tags.unshift({ label: '⚠ no browser audio', cls: 'warn' });
     if (tags.length) {
       const badges = document.createElement('div');
       badges.className = 'badges';
@@ -452,6 +465,7 @@ export function createStremio(ctx) {
         const b = document.createElement('span');
         b.className = `badge badge-${t.cls}`;
         b.textContent = t.label;
+        if (t.cls === 'warn') b.title = 'This stream’s audio (DTS/TrueHD/Atmos) usually plays silently in a browser — pick an AAC/AC3 stream, or expect no sound.';
         badges.append(b);
       }
       info.append(badges);
@@ -488,10 +502,23 @@ export function createStremio(ctx) {
     const raw = stream.description || stream.title || '';
     return String(raw).split('\n').map((l) => l.trim()).filter(Boolean).join(' · ').slice(0, 110);
   }
+  const streamText = (stream) => `${stream.name || ''} ${stream.description || stream.title || ''}`;
+
+  // Browser audio-codec compatibility: 0 = decodes in Chrome (AAC/Opus/MP3…),
+  // 2 = usually SILENT in-browser (DTS/TrueHD/Atmos — object/lossless tracks a
+  // <video> can't decode → picture plays, no sound), 1 = unknown/borderline
+  // (AC3/E-AC3 Dolby Digital — inconsistent). Drives the warn badge + ordering.
+  function audioRank(stream) {
+    const text = streamText(stream);
+    if (/\bdts(-hd)?(\s?ma)?\b|\bdts-?x\b|\btrue-?hd\b|\batmos\b/i.test(text)) return 2;
+    if (/\baac\b|\bopus\b|\bmp3\b|\bvorbis\b|\bflac\b/i.test(text)) return 0;
+    if (/\be-?ac-?3\b|\beac3\b|\bac-?3\b|\bdd\+?\b|\bddp\b|dolby\s?digital/i.test(text)) return 1;
+    return 1;
+  }
 
   // Best-effort quality badges parsed from name + description.
   function parseTags(stream) {
-    const text = `${stream.name || ''} ${stream.description || stream.title || ''}`;
+    const text = streamText(stream);
     const tags = [];
     const seen = new Set();
     const add = (label, cls) => { if (!seen.has(label)) { seen.add(label); tags.push({ label, cls }); } };

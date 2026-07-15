@@ -1155,3 +1155,4 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .badge-aud   { color: var(--text); }
 .badge-codec { color: var(--dim); }
 .badge-seed  { color: var(--ok); }
+.badge-warn  { color: #e8a08c; border-color: rgba(203, 90, 62, 0.55); background: rgba(203, 90, 62, 0.12); } /* likely-silent audio */
