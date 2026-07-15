@@ -14,28 +14,26 @@ export function createSyncMode(ctx) {
   const notice = (text, kind, ms) => ctx.controls.notice(text, kind, ms);
   const loadSource = (source) => ctx.syncCore.loadSource(source);
 
-  // Source toggle (URL / TorBox / metadata Search)
+  // Source toggle: URL / TorBox (paste a link) · Search / Stremio (discover a
+  // title). Torlink is retired from the UI but its module stays wired as a
+  // fallback (still reachable via a pasted magnet through the TorBox flow).
   function setSourceMode(m) {
     sourceMode = m;
     $('source-url').classList.toggle('active', m === 'url');
     $('source-torbox').classList.toggle('active', m === 'torbox');
     $('source-search').classList.toggle('active', m === 'search');
-    $('source-torlink').classList.toggle('active', m === 'torlink');
     $('source-stremio').classList.toggle('active', m === 'stremio');
     $('sync-input').placeholder =
       m === 'torbox'
         ? 'Magnet link or 40-char torrent hash'
         : m === 'search'
           ? 'Search for a movie or show…'
-          : m === 'torlink'
-            ? 'Search torrents by title (YTS)…'
-            : m === 'stremio'
-              ? 'Search a title…'
-              : 'YouTube / Vimeo / .mp4 URL';
-    $('sync-load').textContent = m === 'search' || m === 'torlink' || m === 'stremio' ? 'Search' : 'Load';
+          : m === 'stremio'
+            ? 'Search a title…'
+            : 'YouTube / Vimeo / .mp4 URL';
+    $('sync-load').textContent = m === 'search' || m === 'stremio' ? 'Search' : 'Load';
     $('file-select').hidden = true;
     $('search-panel').hidden = m !== 'search';
-    $('torlink-panel').hidden = m !== 'torlink';
     $('stremio-panel').hidden = m !== 'stremio';
     if (m === 'search') ctx.search.checkTmdbKey();
     if (m === 'stremio') ctx.stremio.activate();
@@ -43,7 +41,6 @@ export function createSyncMode(ctx) {
   $('source-url').addEventListener('click', () => setSourceMode('url'));
   $('source-torbox').addEventListener('click', () => setSourceMode('torbox'));
   $('source-search').addEventListener('click', () => setSourceMode('search'));
-  $('source-torlink').addEventListener('click', () => setSourceMode('torlink'));
   $('source-stremio').addEventListener('click', () => setSourceMode('stremio'));
 
   $('sync-form').addEventListener('submit', (e) => {

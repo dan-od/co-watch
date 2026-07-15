@@ -669,7 +669,9 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 #sync-input { flex: 1; }
 #file-select { max-width: 220px; }
 
-#source-toggle { display: flex; border: 1px solid var(--hairline); border-radius: 2px; overflow: hidden; flex: none; }
+#source-toggle { display: flex; align-items: stretch; border: 1px solid var(--hairline); border-radius: 2px; overflow: hidden; flex: none; }
+.seg-group { display: flex; }
+.seg-div { width: 1px; align-self: stretch; background: var(--hairline); flex: none; } /* paste | discover */
 .seg {
   border: none; border-radius: 0;
   background: transparent;
@@ -1089,14 +1091,38 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   padding: 0.75rem;
   overflow: hidden;
 }
-#stremio-head { display: flex; align-items: center; gap: 0.5rem; flex: none; flex-wrap: wrap; }
+#stremio-head { display: flex; flex-direction: column; gap: 0.5rem; flex: none; }
+.stremio-addon-row { display: flex; align-items: center; gap: 0.5rem; }
 #stremio-url { flex: 1; min-width: 140px; }
-#stremio-catalog { flex: none; max-width: 220px; }
-#stremio-addon { flex: none; color: var(--ok); }
-#stremio-se { display: flex; align-items: center; gap: 0.5rem; flex: none; }
-#stremio-se-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#stremio-load { flex: none; }
+.stremio-addon-tag {
+  flex: none;
+  font-size: 0.75rem;
+  color: var(--ok);
+  border: 1px solid rgba(157, 180, 119, 0.4);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+#stremio-catalog { flex: none; align-self: flex-start; max-width: 100%; }
+
+/* Breadcrumb / back — appears when drilled past discovery */
+#stremio-nav { display: flex; align-items: center; gap: 0.6rem; flex: none; }
+#stremio-back { flex: none; padding: 0.3rem 0.7rem; font-size: 0.82rem; }
+.stremio-crumb {
+  font-size: 0.82rem; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Manual season/episode fallback (no TMDb data) */
+.manual-se { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; padding: 0.4rem 0; }
+.manual-se .hint { flex: 1 1 100%; }
 .se-field { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8rem; color: var(--dim); }
-.se-field input { width: 56px; }
+.se-field input, .se-num { width: 56px; }
+
 #stremio-status { margin: 0; flex: none; }
 #stremio-results { flex: 1; min-height: 0; overflow-y: auto; }
 .results-grid {
@@ -1105,3 +1131,27 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   gap: 0.6rem;
   align-content: start;
 }
+
+/* Stream rows: name + quality badges + a one-line detail. Reuses .torrent-item,
+   adds a badge strip. */
+.stream-row .torrent-info { gap: 5px; }
+.badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--hairline);
+  color: var(--dim);
+  background: var(--panel);
+  white-space: nowrap;
+}
+.badge-res   { color: #141109; background: var(--accent); border-color: var(--accent); } /* headline: resolution */
+.badge-hdr   { color: var(--accent); border-color: rgba(228, 166, 63, 0.5); }
+.badge-size  { color: var(--text); }
+.badge-src   { color: var(--ok); border-color: rgba(157, 180, 119, 0.45); }
+.badge-aud   { color: var(--text); }
+.badge-codec { color: var(--dim); }
+.badge-seed  { color: var(--ok); }

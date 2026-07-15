@@ -105,20 +105,21 @@
             <div id="search-detail" hidden></div>
           </div>
 
-          <!-- Stremio: add-on catalogs / TMDb discovery → add-on streams → play. -->
+          <!-- Stremio: add-on catalogs / TMDb discovery → seasons → add-on
+               streams → play. Body swaps between discovery grid, season list,
+               and stream list; the nav bar is the breadcrumb/back. -->
           <div id="stremio-panel" hidden>
             <div id="stremio-head">
-              <input id="stremio-url" placeholder="Stremio add-on URL (…/manifest.json)" autocomplete="off">
-              <button id="stremio-load" class="ghost">Load</button>
+              <div class="stremio-addon-row">
+                <input id="stremio-url" placeholder="Stremio add-on URL (…/manifest.json)" autocomplete="off">
+                <button id="stremio-load" class="ghost">Load</button>
+                <span id="stremio-addon" class="stremio-addon-tag" hidden></span>
+              </div>
               <select id="stremio-catalog" hidden></select>
-              <span id="stremio-addon" class="hint"></span>
             </div>
-            <div id="stremio-se" hidden>
+            <div id="stremio-nav" hidden>
               <button id="stremio-back" class="ghost">← Back</button>
-              <span id="stremio-se-title" class="hint"></span>
-              <label class="se-field">S<input id="stremio-season" type="number" min="0" value="1"></label>
-              <label class="se-field">E<input id="stremio-episode" type="number" min="1" value="1"></label>
-              <button id="stremio-get" class="primary">Get streams</button>
+              <span id="stremio-crumb" class="stremio-crumb"></span>
             </div>
             <p id="stremio-status" class="hint"></p>
             <div id="stremio-results"></div>
@@ -175,11 +176,15 @@
 
       <div id="action-sync" class="action-area" hidden>
         <div id="source-toggle" role="group" aria-label="Source type">
-          <button id="source-url" class="seg active">URL</button>
-          <button id="source-torbox" class="seg">TorBox</button>
-          <button id="source-search" class="seg">Search</button>
-          <button id="source-torlink" class="seg">Torlink</button>
-          <button id="source-stremio" class="seg">Stremio</button>
+          <span class="seg-group" aria-label="Paste a link">
+            <button id="source-url" class="seg active">URL</button>
+            <button id="source-torbox" class="seg">TorBox</button>
+          </span>
+          <span class="seg-div" aria-hidden="true"></span>
+          <span class="seg-group" aria-label="Discover a title">
+            <button id="source-search" class="seg">Search</button>
+            <button id="source-stremio" class="seg">Stremio</button>
+          </span>
         </div>
         <form id="sync-form">
           <input id="sync-input" placeholder="YouTube / Vimeo / .mp4 URL" autocomplete="off">
