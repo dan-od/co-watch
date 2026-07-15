@@ -6,21 +6,13 @@
 // a flat list. Every row (episode or movie) keeps the cache badge + progress.
 
 import { $, spinner } from '../lib/dom.js';
-import { torboxPost, getKey } from '../lib/torbox.js';
-
-const VIDEO_RE = /\.(mp4|mkv|webm|m4v|mov|avi)$/i;
+import { torboxPost, getKey, resolveMagnet } from '../lib/torbox.js';
 
 // Server returns season blocks ({season, episodes[], …}) for grouped TV.
 const isGrouped = (r) => Array.isArray(r) && r[0] && Array.isArray(r[0].episodes) && r[0].season !== undefined;
 
 export function createTorlink(ctx) {
   const notice = (text, kind, ms) => ctx.controls.notice(text, kind, ms);
-  let pollTimers = []; // in-flight download polls, cleared when a new search runs
-
-  function clearPolls() {
-    for (const t of pollTimers) clearInterval(t);
-    pollTimers = [];
-  }
 
   async function search(query, type = 'all') {
     // Send the TMDb key in a header (kept out of the URL/logs) so the server can
@@ -189,26 +181,24 @@ export function createTorlink(ctx) {
     loadBtn.disabled = true;
     loadBtn.textContent = 'Starting…';
     try {
-      let meta = await torboxPost('/torbox/fetch', { apiKey, magnet: item.magnet, hash: item.hash });
-      if (!meta?.success) throw new Error(meta?.detail || 'could not add torrent');
-
-      if (!meta.cached && !meta.finished) {
-        progress.hidden = false;
-        badge.textContent = '⏳ downloading';
-        badge.style.color = 'var(--accent)';
-        loadBtn.textContent = 'Downloading…';
-        meta = await pollUntilReady(apiKey, meta.torrentId, fill, pct);
-        progress.hidden = true;
-        if (!meta) return; // pollUntilReady already notified + reset the button
-      }
-
-      const videos = (meta.files || []).filter((f) => VIDEO_RE.test(f.name || ''));
-      if (!videos.length) throw new Error('no video files in this torrent');
-      videos.sort((a, b) => (b.size || 0) - (a.size || 0));
-      const file = videos[0];
-
-      const dl = await torboxPost('/torbox/load', { apiKey, torrentId: meta.torrentId, fileId: file.id });
-      if (!dl?.success || !dl.streamUrl) throw new Error(dl?.detail || 'could not get stream URL');
+      // Shared resolve: add magnet → wait for cache/finish (0–1 progress) →
+      // largest video → stream URL. Same flow the Stremio infoHash path uses.
+      let downloading = false;
+      const { streamUrl, fileName } = await resolveMagnet(apiKey, item.magnet, item.hash, {
+        onProgress: (p) => {
+          if (!downloading) {
+            downloading = true;
+            progress.hidden = false;
+            badge.textContent = '⏳ downloading';
+            badge.style.color = 'var(--accent)';
+            loadBtn.textContent = 'Downloading…';
+          }
+          const pc = Math.round((p || 0) * 100);
+          fill.style.width = `${pc}%`;
+          pct.textContent = `${pc}%`;
+        },
+      });
+      progress.hidden = true;
 
       // magnet + fileName let each peer re-resolve with their own key
       // (TorBox stream URLs are IP-locked); resolvedUrl is our local play.
@@ -216,8 +206,8 @@ export function createTorlink(ctx) {
         kind: 'torbox',
         magnet: item.magnet,
         hash: item.hash,
-        fileName: file.name,
-        resolvedUrl: dl.streamUrl,
+        fileName,
+        resolvedUrl: streamUrl,
       };
       rememberMeta(item);
       await ctx.syncCore.loadSource(source);
@@ -238,36 +228,6 @@ export function createTorlink(ctx) {
     }
   }
 
-  // Poll /torbox/fetch (progress is a 0–1 fraction) until cached/finished.
-  function pollUntilReady(apiKey, torrentId, fill, pct) {
-    return new Promise((resolve) => {
-      const timer = setInterval(async () => {
-        let m;
-        try {
-          m = await torboxPost('/torbox/fetch', { apiKey, torrentId });
-        } catch {
-          return; // transient network blip — keep polling
-        }
-        if (!m?.success) {
-          clearInterval(timer);
-          pollTimers = pollTimers.filter((t) => t !== timer);
-          notice(`TorBox: ${m?.detail || 'download failed'}`, 'error', 5000);
-          resolve(null);
-          return;
-        }
-        const p = Math.round((m.progress || 0) * 100);
-        fill.style.width = `${p}%`;
-        pct.textContent = `${p}%`;
-        if (m.finished || m.cached) {
-          clearInterval(timer);
-          pollTimers = pollTimers.filter((t) => t !== timer);
-          resolve(m);
-        }
-      }, 3000);
-      pollTimers.push(timer);
-    });
-  }
-
   function rememberMeta(item) {
     try {
       const map = JSON.parse(localStorage.getItem('hash_meta') || '{}');
@@ -280,7 +240,6 @@ export function createTorlink(ctx) {
 
   // Full flow used by the Torlink tab: search → cache-check → render.
   async function run(query) {
-    clearPolls();
     const status = $('torlink-status');
     const container = $('torlink-results');
     const type = $('torlink-type').value;
