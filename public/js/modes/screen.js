@@ -151,14 +151,23 @@ export function createScreen(ctx) {
     $('share-placeholder').hidden = true;
     if (mine) {
       sv.muted = true; // never echo our own capture
-    } else if (ctx.mixer.isActive()) {
-      sv.muted = true; // the shared audio comes through the mixer's media gain
-      ctx.mixer.attachMediaStream(stream);
     } else {
-      sv.muted = false; // passive fallback: the element plays the audio itself
+      refreshRemoteAudio(stream);
     }
     ctx.controls.updateLayout(); // theater: movie big, cameras shrink to a strip
     tryPlay(sv);
+  }
+
+  // Route the shared audio for a REMOTE stream — and only mute the element if
+  // the mixer's graph actually took it. ontrack fires PER TRACK (screen video
+  // lands before screen audio), so media re-calls this when the audio track
+  // arrives; the old showScreen-only wiring ran once against a video-only
+  // stream and left the element muted with nothing routed → silent share.
+  function refreshRemoteAudio(stream) {
+    const sv = $('screen-video');
+    if (sv.srcObject !== stream) return; // stale — a newer share took the stage
+    const routed = ctx.mixer.isActive() && ctx.mixer.attachMediaStream(stream);
+    sv.muted = !!routed; // graph has it → mute the element; else element plays it
   }
 
   function clearScreen() {
@@ -184,6 +193,7 @@ export function createScreen(ctx) {
     startScreenShare,
     stopScreenShare,
     showScreen,
+    refreshRemoteAudio,
     clearScreen,
     updateShareButton,
     dispose: () => screenStream?.getTracks().forEach((t) => t.stop()),

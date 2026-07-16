@@ -149,20 +149,29 @@ export function createTiles(ctx) {
     return t;
   }
 
+  // Called once per ontrack — so TWICE per camera stream (mic + video, either
+  // order). The video wiring runs once per stream; the mixer attach re-runs on
+  // every call because the audio track may only exist by the second one. The
+  // mixer call is fenced so an audio hiccup can never stop the video playing.
   function setStream(key, stream) {
     const t = ensureTile(key);
-    if (t.stream === stream) return;
-    t.stream = stream;
-    t.video.srcObject = stream;
-    if (key === 'self') {
-      t.video.muted = true; // never monitor our own mic
-    } else {
+    const isNew = t.stream !== stream;
+    if (isNew) {
+      t.stream = stream;
+      t.video.srcObject = stream;
+      if (key === 'self') t.video.muted = true; // never monitor our own mic
+      tryPlay(t.video);
+    }
+    if (key !== 'self') {
       // Route this person's audio through the mixer (mutes the element and
       // takes its audio through a GainNode, or sets element volume if passive).
-      ctx.mixer.attachPerson(key, stream, t.video, t.name, t.volEl);
+      try {
+        ctx.mixer.attachPerson(key, stream, t.video, t.name, t.volEl);
+      } catch {
+        // audio routing must never take the camera down with it
+      }
     }
-    tryPlay(t.video);
-    attachAnalyser(t, stream);
+    attachAnalyser(t, stream); // re-runnable: no-ops until the audio track exists
   }
 
   function setName(key, name) {

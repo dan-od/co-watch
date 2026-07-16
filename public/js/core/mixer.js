@@ -120,14 +120,21 @@ export function createMixer(ctx) {
   }
 
   // Screen-share (Mode A) audio: route the stream's audio through mediaGain.
+  // Returns true only when the graph actually took the audio — the caller uses
+  // that to decide whether to mute the <video> element. ontrack fires PER
+  // TRACK, so this is often called first with a video-only stream (false) and
+  // again once the audio track lands (true).
   function attachMediaStream(stream) {
     detachMediaStream();
-    if (!active || !stream?.getAudioTracks?.().length) return;
+    if (!active || !stream?.getAudioTracks?.().length) return false;
     try {
       mediaStreamSrc = ac.createMediaStreamSource(stream);
       mediaStreamSrc.connect(mediaGain);
+      resume(); // autoplay-policy insurance: a watcher may not have clicked yet
+      return true;
     } catch {
       mediaStreamSrc = null;
+      return false;
     }
   }
   function detachMediaStream() {
@@ -168,16 +175,26 @@ export function createMixer(ctx) {
     }
     p.videoEl = videoEl;
     if (name) p.name = name;
-    if (active) {
-      videoEl.muted = true; // audio comes from the graph, not the element
+    // ontrack fires PER TRACK, so the first call for a stream may see video
+    // only — no audio track yet. Never throw (createMediaStreamSource rejects
+    // audio-less streams) and never mute the element until the graph has
+    // actually taken the audio; tiles re-calls us when the audio track lands.
+    if (active && stream?.getAudioTracks?.().length) {
       try {
         p.source?.disconnect();
       } catch {}
-      p.source = ac.createMediaStreamSource(stream);
-      p.source.connect(p.gain);
-      p.gain.connect(masterGain);
+      try {
+        p.source = ac.createMediaStreamSource(stream);
+        p.source.connect(p.gain);
+        p.gain.connect(masterGain);
+        videoEl.muted = true; // audio comes from the graph, not the element
+        resume(); // autoplay-policy insurance: a watcher may not have clicked yet
+      } catch {
+        p.source = null;
+        videoEl.muted = false; // graph refused it — let the element play audio
+      }
     } else {
-      videoEl.muted = false; // passive: the element plays; we set its volume
+      videoEl.muted = false; // passive mode, or no audio track (yet)
     }
     applyPerson(p);
     refreshRow(peerId, p);

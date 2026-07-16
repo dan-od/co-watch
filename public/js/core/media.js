@@ -149,7 +149,11 @@ export function createMedia(ctx) {
       if (candidate) ctx.signaling.signal({ type: 'ice-candidate', candidate, to: peerId });
     };
 
-    pc.ontrack = ({ streams }) => {
+    // ontrack fires PER TRACK — for a camera stream that's mic then video (or
+    // the reverse; m-line reuse after share stop/start can flip the order), and
+    // for a screen share it's video then audio. So the audio routing must be
+    // re-runnable: the first call for a stream often sees no audio track yet.
+    pc.ontrack = ({ track, streams }) => {
       const stream = streams[0];
       if (!stream) return;
       // The sharer announces its screen stream id over signaling before the
@@ -157,6 +161,7 @@ export function createMedia(ctx) {
       // screen stream → stage, anything else → that person's camera tile.
       if (stream.id === ctx.screen.getRemoteScreenStreamId()) {
         if ($('screen-video').srcObject !== stream) ctx.screen.showScreen(stream, false);
+        else if (track.kind === 'audio') ctx.screen.refreshRemoteAudio(stream);
       } else {
         ctx.tiles.setStream(peerId, stream);
       }
