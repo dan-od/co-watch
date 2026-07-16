@@ -167,6 +167,7 @@ export function createStremio(ctx) {
       const metas = (data.metas || []).map((m) => ({
         name: m.name || m.title,
         poster: m.poster,
+        backdrop: m.background || '', // some add-ons ship wide art
         type: m.type || cat.type,
         id: m.id, // already a Stremio id
       }));
@@ -202,6 +203,8 @@ export function createStremio(ctx) {
       const metas = data.data.map((m) => ({
         name: m.title,
         poster: m.poster_path ? `https://image.tmdb.org/t/p/w300${m.poster_path}` : '',
+        backdrop: m.backdrop_path ? `https://image.tmdb.org/t/p/w1280${m.backdrop_path}` : '',
+        overview: m.overview || '',
         type: m.type === 'tv' ? 'series' : 'movie',
         tmdbId: m.id,
         year: m.year,
@@ -223,6 +226,10 @@ export function createStremio(ctx) {
     container.append(p);
   }
 
+  // Netflix/Stremio-style poster wall: the whole card is the click target and
+  // the title/meta sit on a gradient over the poster's bottom edge. Uses its
+  // own .poster-card classes so the (dormant) search panel's cards are
+  // untouched.
   function renderGrid(items) {
     const container = $('stremio-results');
     container.replaceChildren();
@@ -231,26 +238,28 @@ export function createStremio(ctx) {
     grid.className = 'results-grid';
     for (const item of items) {
       const card = document.createElement('div');
-      card.className = 'result-card';
+      card.className = 'poster-card';
+      card.title = item.name || '';
+      card.setAttribute('role', 'button');
+      card.tabIndex = 0;
       const img = document.createElement('img');
       img.src = item.poster || PLACEHOLDER;
       img.alt = item.name || '';
       img.loading = 'lazy';
       img.addEventListener('error', () => { img.src = PLACEHOLDER; }, { once: true });
-      const body = document.createElement('div');
-      body.className = 'card-body';
+      const overlay = document.createElement('div');
+      overlay.className = 'poster-overlay';
       const h = document.createElement('h4');
       h.textContent = item.name || 'Untitled';
-      h.title = item.name || '';
       const meta = document.createElement('span');
-      meta.className = 'card-meta';
-      meta.textContent = [item.year, isSeries(item.type) ? 'TV' : 'Movie'].filter(Boolean).join(' · ');
-      const btn = document.createElement('button');
-      btn.className = 'primary';
-      btn.textContent = isSeries(item.type) ? 'Episodes' : 'Streams';
-      btn.addEventListener('click', () => selectTitle(item));
-      body.append(h, meta, btn);
-      card.append(img, body);
+      meta.className = 'poster-meta';
+      meta.textContent = [item.year, isSeries(item.type) ? 'Series' : 'Movie'].filter(Boolean).join(' · ');
+      overlay.append(h, meta);
+      card.append(img, overlay);
+      card.addEventListener('click', () => selectTitle(item));
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectTitle(item); }
+      });
       grid.append(card);
     }
     container.append(grid);
@@ -266,16 +275,17 @@ export function createStremio(ctx) {
         return;
       }
       if (isSeries(item.type)) {
-        const seasons = await loadSeasons(tmdbId);
-        pushView({ label: item.name || 'Series', render: () => renderSeasons(item, baseId, tmdbId, seasons) });
+        const info = await loadSeasons(tmdbId);
+        const n = info?.seasons?.length || 0;
+        pushView({ label: item.name || 'Series', render: () => renderSeasons(item, baseId, tmdbId, info) });
         status(
-          seasons?.length
-            ? `${seasons.length} season${seasons.length === 1 ? '' : 's'} — expand one to pick an episode.`
+          n
+            ? `${n} season${n === 1 ? '' : 's'} — expand one to pick an episode.`
             : 'No season data (add a TMDb key) — enter a season/episode below.',
-          seasons?.length ? 'ok' : ''
+          n ? 'ok' : ''
         );
       } else {
-        await openStreams('movie', baseId, item.name);
+        await openStreams('movie', baseId, item.name, { backdrop: item.backdrop, overview: item.overview });
       }
     } finally {
       spinner(false);
@@ -283,13 +293,19 @@ export function createStremio(ctx) {
   }
 
   // ---- series: seasons (TMDb) ----
+  // Returns { seasons, backdrop, overview } — the tv-details call we already
+  // make carries the wide art + synopsis the cinematic hero needs.
   async function loadSeasons(tmdbId) {
     if (!tmdbId) return null;
     const tv = await tmdb(`tv/${tmdbId}`);
     if (!tv?.seasons) return null;
-    return tv.seasons
-      .filter((s) => (s.episode_count || 0) > 0)
-      .map((s) => ({ number: s.season_number, count: s.episode_count, name: s.name, overview: s.overview }));
+    return {
+      seasons: tv.seasons
+        .filter((s) => (s.episode_count || 0) > 0)
+        .map((s) => ({ number: s.season_number, count: s.episode_count, name: s.name, overview: s.overview })),
+      backdrop: tv.backdrop_path ? `https://image.tmdb.org/t/p/w1280${tv.backdrop_path}` : '',
+      overview: tv.overview || '',
+    };
   }
 
   async function loadEpisodes(tmdbId, seasonNumber, count) {
@@ -307,36 +323,68 @@ export function createStremio(ctx) {
     return Array.from({ length: count }, (_, i) => ({ number: i + 1, name: '' }));
   }
 
-  // Series hero (poster + title + season count) above the season blocks.
-  function buildSeriesHero(item, seasons) {
+  // Netflix-style title header: full-width backdrop with a dark gradient,
+  // poster floating left, big title, meta chips, and a clamped synopsis.
+  // Used above the season list AND (slimmer) above a title's stream list.
+  function buildTitleHero(opts) {
+    const { name, poster, backdrop, metaText, overview, slim } = opts;
     const hero = document.createElement('div');
-    hero.className = 'series-hero';
-    const img = document.createElement('img');
-    img.src = item.poster || PLACEHOLDER;
-    img.alt = '';
-    img.addEventListener('error', () => { img.src = PLACEHOLDER; }, { once: true });
+    hero.className = `title-hero${slim ? ' slim' : ''}`;
+    if (backdrop) hero.style.backgroundImage = `url("${backdrop.replace(/"/g, '%22')}")`;
+    const scrim = document.createElement('div');
+    scrim.className = 'hero-scrim';
+    const inner = document.createElement('div');
+    inner.className = 'hero-inner';
+    if (poster) {
+      const img = document.createElement('img');
+      img.className = 'hero-poster';
+      img.src = poster;
+      img.alt = '';
+      img.addEventListener('error', () => img.remove(), { once: true });
+      inner.append(img);
+    }
     const body = document.createElement('div');
-    body.className = 'series-hero-body';
-    const h = document.createElement('h3');
-    h.textContent = item.name || 'Series';
-    const meta = document.createElement('span');
-    meta.className = 'card-meta';
-    meta.textContent = [item.year, `${seasons.length} season${seasons.length === 1 ? '' : 's'}`]
-      .filter(Boolean).join(' · ');
-    body.append(h, meta);
-    hero.append(img, body);
+    body.className = 'hero-body';
+    const h = document.createElement('h2');
+    h.textContent = name || 'Untitled';
+    body.append(h);
+    if (metaText) {
+      const meta = document.createElement('span');
+      meta.className = 'hero-meta';
+      meta.textContent = metaText;
+      body.append(meta);
+    }
+    if (overview && !slim) {
+      const ov = document.createElement('p');
+      ov.className = 'hero-overview';
+      ov.textContent = overview;
+      ov.title = overview;
+      body.append(ov);
+    }
+    inner.append(body);
+    hero.append(scrim, inner);
     return hero;
   }
 
-  function renderSeasons(item, baseId, tmdbId, seasons) {
+  function renderSeasons(item, baseId, tmdbId, info) {
     const container = $('stremio-results');
     container.replaceChildren();
+    const seasons = info?.seasons;
     if (!seasons || !seasons.length) { renderManualSE(container, item.name, baseId); return; }
-    container.append(buildSeriesHero(item, seasons));
-    for (const s of seasons) container.append(buildSeasonBlock(item.name, baseId, tmdbId, s));
+    const art = { backdrop: info.backdrop || item.backdrop || '', poster: item.poster };
+    container.append(
+      buildTitleHero({
+        name: item.name,
+        poster: item.poster,
+        backdrop: art.backdrop,
+        metaText: [item.year, `${seasons.length} season${seasons.length === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
+        overview: info.overview || item.overview,
+      })
+    );
+    for (const s of seasons) container.append(buildSeasonBlock(item.name, baseId, tmdbId, s, art));
   }
 
-  function buildSeasonBlock(name, baseId, tmdbId, s) {
+  function buildSeasonBlock(name, baseId, tmdbId, s, art) {
     const block = document.createElement('div');
     block.className = 'season-block';
     const header = document.createElement('div');
@@ -369,7 +417,7 @@ export function createStremio(ctx) {
       epList.append(loading);
       const eps = await loadEpisodes(tmdbId, s.number, s.count);
       epList.replaceChildren();
-      for (const ep of eps) epList.append(buildEpisodeRow(name, baseId, s.number, ep));
+      for (const ep of eps) epList.append(buildEpisodeRow(name, baseId, s.number, ep, art));
     };
     header.addEventListener('click', (e) => { if (e.target !== toggle) open(); });
     toggle.addEventListener('click', open);
@@ -378,7 +426,7 @@ export function createStremio(ctx) {
     return block;
   }
 
-  function buildEpisodeRow(showName, baseId, season, ep) {
+  function buildEpisodeRow(showName, baseId, season, ep, art) {
     // TMDb air_date is YYYY-MM-DD; a future date means "not out yet" → the row
     // renders locked (dim, no Streams) with the air date, like a coming-soon slot.
     const future = !!ep.air && ep.air > new Date().toISOString().slice(0, 10);
@@ -429,7 +477,7 @@ export function createStremio(ctx) {
     btn.disabled = future;
     if (!future) {
       btn.addEventListener('click', () =>
-        openStreams('series', `${baseId}:${season}:${ep.number}`, `${showName} · S${season}E${ep.number}`)
+        openStreams('series', `${baseId}:${season}:${ep.number}`, `${showName} · S${season}E${ep.number}`, art)
       );
     }
     actions.append(btn);
@@ -468,13 +516,13 @@ export function createStremio(ctx) {
   }
 
   // ---- streams ----
-  async function openStreams(type, id, title) {
+  async function openStreams(type, id, title, art) {
     status(`Fetching streams for ${title}…`);
     spinner(true);
     try {
       const data = await fetchStreams(type, id);
       const streams = data.streams || [];
-      pushView({ label: title, render: () => renderStreams(streams, { type, id, title }) });
+      pushView({ label: title, render: () => renderStreams(streams, { type, id, title, art }) });
       status(`${streams.length} stream${streams.length === 1 ? '' : 's'}.`, streams.length ? 'ok' : '');
     } catch (err) {
       status(`Streams failed: ${err.message || err}`, 'warn');
@@ -486,6 +534,11 @@ export function createStremio(ctx) {
   function renderStreams(streams, meta) {
     const container = $('stremio-results');
     container.replaceChildren();
+    if (meta.art?.backdrop) {
+      container.append(
+        buildTitleHero({ name: meta.title, backdrop: meta.art.backdrop, slim: true })
+      );
+    }
     if (!streams.length) { emptyMsg(container, 'No streams available for this title.'); return; }
     // Prefer browser-playable audio: float AAC/Opus streams up and sink
     // DTS/TrueHD/Atmos (which play silently in-browser) down. Stable sort keeps

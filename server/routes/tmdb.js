@@ -37,6 +37,7 @@ async function handleTmdbSearch(req, res, url) {
           title: kind === 'movie' ? it.title : it.name,
           year: (kind === 'movie' ? it.release_date : it.first_air_date)?.split('-')[0] || null,
           poster_path: it.poster_path || null,
+          backdrop_path: it.backdrop_path || null, // wide art for the cinematic hero/headers
           overview: it.overview || '',
           vote_average: it.vote_average ?? null,
           popularity: it.popularity ?? 0,
