@@ -3,10 +3,14 @@
 //   GET /api/stremio/manifest?url=<addon>
 //   GET /api/stremio/catalog?url=<addon>&type=<t>&id=<id>[&extra=<seg>]
 //   GET /api/stremio/stream?url=<addon>&type=<t>&id=<id>
+//   GET /api/stremio/subtitles?url=<addon>&type=<t>&id=<id>   → subtitle LIST
+//   GET /api/stremio/subfile?url=<subtitle-file-url>          → subtitle TEXT
 // <addon> is the add-on URL the user pasted (may end in /manifest.json — we
 // normalize to the base). Endpoints are built per the Stremio add-on protocol
-// (resource/type/id[.json]). Only these three resources are reachable — this
-// is not a general proxy — and every fetched URL passes the SSRF guard.
+// (resource/type/id[.json]). Only these resources are reachable — this is not
+// a general proxy — and every fetched URL passes the SSRF guard. `subfile`
+// fetches a subtitle file URL that came from a subtitles/stream response; it is
+// guarded identically so an add-on can't point us at an internal address.
 
 const { sendJson } = require('../lib/http');
 const { assertPublicUrl } = require('../lib/ssrf');
@@ -40,16 +44,20 @@ function buildEndpoint(resource, params) {
     if (!type || !id) return { error: 'stream needs type and id' };
     return { endpoint: `${base}/stream/${enc(type)}/${enc(id)}.json` };
   }
+  if (resource === 'subtitles') {
+    if (!type || !id) return { error: 'subtitles need type and id' };
+    return { endpoint: `${base}/subtitles/${enc(type)}/${enc(id)}.json` };
+  }
   return { error: 'unknown endpoint' };
 }
 
 // Fetch with redirects followed MANUALLY so every hop is re-validated against
 // the SSRF guard (a public host must not be able to 302 us onto a private one).
-async function safeFetch(startUrl) {
+async function safeFetch(startUrl, accept = 'application/json') {
   let current = await assertPublicUrl(startUrl);
   for (let hop = 0; hop < 4; hop++) {
     const res = await fetch(current.href, {
-      headers: { 'User-Agent': 'CoWatch/1.0', Accept: 'application/json' },
+      headers: { 'User-Agent': 'CoWatch/1.0', Accept: accept },
       redirect: 'manual',
       signal: AbortSignal.timeout(10000),
     });
@@ -72,6 +80,28 @@ async function handleStremio(req, res, url) {
     return;
   }
   const resource = url.pathname.replace(/^\/api\/stremio\//, '');
+
+  // subfile: fetch an actual subtitle file (its URL came from a subtitles/
+  // stream response) and return the raw text. SSRF-guarded like everything else.
+  if (resource === 'subfile') {
+    const suburl = url.searchParams.get('url');
+    if (!suburl) {
+      sendJson(res, 400, { success: false, detail: 'missing url parameter' });
+      return;
+    }
+    try {
+      const response = await safeFetch(suburl, 'text/vtt, text/plain, application/x-subrip, */*');
+      if (!response.ok) throw new Error(`subtitle HTTP ${response.status}`);
+      const text = await response.text();
+      if (text.length > 2_000_000) throw new Error('subtitle file too large');
+      sendJson(res, 200, { success: true, text });
+    } catch (err) {
+      const msg = err.message || 'subtitle unreachable';
+      sendJson(res, BLOCKED_RE.test(msg) ? 400 : 502, { success: false, detail: msg });
+    }
+    return;
+  }
+
   const { endpoint, error } = buildEndpoint(resource, url.searchParams);
   if (error) {
     sendJson(res, 400, { success: false, detail: error });
