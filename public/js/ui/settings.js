@@ -11,6 +11,20 @@ export function createSettings(ctx) {
     $('settings-panel').hidden = !open;
   }
 
+  // Reveal-eye on the key inputs (they stay type=password by default).
+  function bindEye(inputId, eyeId) {
+    const input = $(inputId);
+    const eye = $(eyeId);
+    eye.addEventListener('click', () => {
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      eye.classList.toggle('active', show);
+      eye.title = show ? 'Hide key' : 'Show key';
+    });
+  }
+  bindEye('torbox-key', 'torbox-eye');
+  bindEye('tmdb-key', 'tmdb-eye');
+
   // ---- TorBox key ----
   $('torbox-key').value = getKey();
   updateKeyStatus(getKey() ? 'unknown' : 'empty');

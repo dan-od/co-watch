@@ -32,6 +32,7 @@
         <span class="wordmark">COWATCH</span>
         <span id="status-wrap"><span id="status-dot"></span><span id="status">Connecting…</span></span>
         <span id="net-wrap" title="Network stats appear once the call is up"><span id="net-dot"></span><span id="net-label">No call</span></span>
+        <span id="live-chip" title="Playback is syncing to everyone in the room" hidden><i class="live-dot"></i>Live</span>
       </div>
 
       <nav id="mode-tabs">
@@ -53,6 +54,9 @@
         <label for="torbox-key">TorBox API key</label>
         <div class="key-row">
           <input id="torbox-key" type="password" placeholder="Paste your TorBox API key" autocomplete="off">
+          <button id="torbox-eye" class="ghost key-eye" type="button" title="Show key" aria-label="Show key">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
           <button id="torbox-save" class="ghost">Save</button>
         </div>
         <p id="torbox-key-status" class="key-status"></p>
@@ -61,6 +65,9 @@
         <label for="tmdb-key">TMDb API key</label>
         <div class="key-row">
           <input id="tmdb-key" type="password" placeholder="Paste your TMDb API key" autocomplete="off">
+          <button id="tmdb-eye" class="ghost key-eye" type="button" title="Show key" aria-label="Show key">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
           <button id="tmdb-save" class="ghost">Save</button>
         </div>
         <p id="tmdb-key-status" class="key-status"></p>
@@ -110,8 +117,9 @@
                and stream list; the nav bar is the breadcrumb/back. -->
           <div id="stremio-panel" hidden>
             <div id="stremio-head">
+              <label class="panel-label" for="stremio-url">Stremio add-on URL</label>
               <div class="stremio-addon-row">
-                <input id="stremio-url" placeholder="Stremio add-on URL (…/manifest.json)" autocomplete="off">
+                <input id="stremio-url" placeholder="https://…/manifest.json" autocomplete="off">
                 <button id="stremio-load" class="ghost">Load</button>
                 <span id="stremio-addon" class="stremio-addon-tag" hidden></span>
               </div>
@@ -159,6 +167,13 @@
       </div>
 
       <aside id="chat-rail">
+        <!-- Rail header: title + live occupancy + invite (reuses copy-link).
+             PiP relocates #messages/#send-form only, so this stays put. -->
+        <div id="chat-head">
+          <span class="chat-title">Room Chat</span>
+          <span id="online-chip" title="People in the room">1 here</span>
+          <button id="invite-btn" class="ghost" title="Copy the room link">Invite</button>
+        </div>
         <div id="messages" aria-live="polite"></div>
         <form id="send-form">
           <input id="send-input" placeholder="Message…" autocomplete="off">

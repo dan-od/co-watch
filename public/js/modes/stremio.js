@@ -267,7 +267,7 @@ export function createStremio(ctx) {
       }
       if (isSeries(item.type)) {
         const seasons = await loadSeasons(tmdbId);
-        pushView({ label: item.name || 'Series', render: () => renderSeasons(item.name, baseId, tmdbId, seasons) });
+        pushView({ label: item.name || 'Series', render: () => renderSeasons(item, baseId, tmdbId, seasons) });
         status(
           seasons?.length
             ? `${seasons.length} season${seasons.length === 1 ? '' : 's'} — expand one to pick an episode.`
@@ -295,16 +295,45 @@ export function createStremio(ctx) {
   async function loadEpisodes(tmdbId, seasonNumber, count) {
     const data = tmdbId ? await tmdb(`tv/${tmdbId}/season/${seasonNumber}`) : null;
     if (data?.episodes?.length) {
-      return data.episodes.map((e) => ({ number: e.episode_number, name: e.name, air: e.air_date, overview: e.overview }));
+      return data.episodes.map((e) => ({
+        number: e.episode_number,
+        name: e.name,
+        air: e.air_date,
+        overview: e.overview,
+        still: e.still_path, // 16:9 episode thumbnail
+        runtime: e.runtime, // minutes
+      }));
     }
     return Array.from({ length: count }, (_, i) => ({ number: i + 1, name: '' }));
   }
 
-  function renderSeasons(name, baseId, tmdbId, seasons) {
+  // Series hero (poster + title + season count) above the season blocks.
+  function buildSeriesHero(item, seasons) {
+    const hero = document.createElement('div');
+    hero.className = 'series-hero';
+    const img = document.createElement('img');
+    img.src = item.poster || PLACEHOLDER;
+    img.alt = '';
+    img.addEventListener('error', () => { img.src = PLACEHOLDER; }, { once: true });
+    const body = document.createElement('div');
+    body.className = 'series-hero-body';
+    const h = document.createElement('h3');
+    h.textContent = item.name || 'Series';
+    const meta = document.createElement('span');
+    meta.className = 'card-meta';
+    meta.textContent = [item.year, `${seasons.length} season${seasons.length === 1 ? '' : 's'}`]
+      .filter(Boolean).join(' · ');
+    body.append(h, meta);
+    hero.append(img, body);
+    return hero;
+  }
+
+  function renderSeasons(item, baseId, tmdbId, seasons) {
     const container = $('stremio-results');
     container.replaceChildren();
-    if (!seasons || !seasons.length) { renderManualSE(container, name, baseId); return; }
-    for (const s of seasons) container.append(buildSeasonBlock(name, baseId, tmdbId, s));
+    if (!seasons || !seasons.length) { renderManualSE(container, item.name, baseId); return; }
+    container.append(buildSeriesHero(item, seasons));
+    for (const s of seasons) container.append(buildSeasonBlock(item.name, baseId, tmdbId, s));
   }
 
   function buildSeasonBlock(name, baseId, tmdbId, s) {
@@ -350,10 +379,25 @@ export function createStremio(ctx) {
   }
 
   function buildEpisodeRow(showName, baseId, season, ep) {
+    // TMDb air_date is YYYY-MM-DD; a future date means "not out yet" → the row
+    // renders locked (dim, no Streams) with the air date, like a coming-soon slot.
+    const future = !!ep.air && ep.air > new Date().toISOString().slice(0, 10);
+
     const row = document.createElement('div');
-    row.className = 'torrent-item';
+    row.className = `torrent-item episode-row${future ? ' episode-locked' : ''}`;
     const head = document.createElement('div');
     head.className = 'torrent-row-head';
+
+    if (ep.still) {
+      const thumb = document.createElement('img');
+      thumb.className = 'episode-thumb';
+      thumb.src = `https://image.tmdb.org/t/p/w185${ep.still}`;
+      thumb.alt = '';
+      thumb.loading = 'lazy';
+      thumb.addEventListener('error', () => thumb.remove(), { once: true });
+      head.append(thumb);
+    }
+
     const info = document.createElement('div');
     info.className = 'torrent-info';
     const nm = document.createElement('span');
@@ -361,20 +405,33 @@ export function createStremio(ctx) {
     nm.textContent = `E${ep.number}${ep.name ? ` · ${ep.name}` : ''}`;
     nm.title = nm.textContent;
     info.append(nm);
-    if (ep.air) {
+    if (ep.overview) {
+      const ov = document.createElement('span');
+      ov.className = 'episode-overview';
+      ov.textContent = ep.overview;
+      ov.title = ep.overview;
+      info.append(ov);
+    }
+    const metaBits = [future ? `Airs ${ep.air}` : ep.air, ep.runtime ? `${ep.runtime} min` : '']
+      .filter(Boolean).join(' · ');
+    if (metaBits) {
       const meta = document.createElement('span');
       meta.className = 'torrent-meta';
-      meta.textContent = ep.air;
+      meta.textContent = metaBits;
       info.append(meta);
     }
+
     const actions = document.createElement('div');
     actions.className = 'torrent-actions';
     const btn = document.createElement('button');
     btn.className = 'primary';
-    btn.textContent = 'Streams';
-    btn.addEventListener('click', () =>
-      openStreams('series', `${baseId}:${season}:${ep.number}`, `${showName} · S${season}E${ep.number}`)
-    );
+    btn.textContent = future ? 'Not out' : 'Streams';
+    btn.disabled = future;
+    if (!future) {
+      btn.addEventListener('click', () =>
+        openStreams('series', `${baseId}:${season}:${ep.number}`, `${showName} · S${season}E${ep.number}`)
+      );
+    }
     actions.append(btn);
     head.append(info, actions);
     row.append(head);

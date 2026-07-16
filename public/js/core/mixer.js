@@ -243,9 +243,14 @@ export function createMixer(ctx) {
     const row = document.createElement('div');
     row.className = 'mix-row';
     row.dataset.peer = peerId;
+    const idCol = document.createElement('span');
+    idCol.className = 'mix-id';
     const nameEl = document.createElement('span');
     nameEl.className = 'mix-name';
     nameEl.textContent = p.name;
+    const statusEl = document.createElement('span');
+    statusEl.className = 'mix-status';
+    idCol.append(nameEl, statusEl);
     const mute = document.createElement('button');
     mute.className = 'mix-mute';
     mute.title = 'Mute for me';
@@ -255,10 +260,11 @@ export function createMixer(ctx) {
     slider.type = 'range';
     slider.min = '0';
     slider.max = '100';
-    row.append(nameEl, mute, slider);
+    row.append(idCol, mute, slider);
     host.append(row);
     p.rowEl = row;
     p.rowNameEl = nameEl;
+    p.rowStatusEl = statusEl;
     p.muteBtns.add(mute);
     bindSlider(peerId, slider);
     updatePanelEmpty();
@@ -267,6 +273,18 @@ export function createMixer(ctx) {
   function refreshRow(peerId, p) {
     for (const b of p.muteBtns) b.textContent = p.muted ? '🔇' : '🔊';
     p.rowEl?.classList.toggle('muted', p.muted);
+    if (p.rowStatusEl) {
+      p.rowStatusEl.textContent = p.muted ? 'Muted' : p.speaking ? 'Speaking' : '';
+      p.rowStatusEl.classList.toggle('speaking', !p.muted && !!p.speaking);
+    }
+  }
+
+  // Live "Speaking" sub-label, driven by tiles' level meter (only on change).
+  function setPersonSpeaking(peerId, speaking) {
+    const p = people.get(peerId);
+    if (!p || p.speaking === speaking) return;
+    p.speaking = speaking;
+    refreshRow(peerId, p);
   }
   function updatePanelEmpty() {
     const empty = $('mixer-empty');
@@ -321,6 +339,7 @@ export function createMixer(ctx) {
     setPersonVolume,
     togglePersonMute,
     setPersonName,
+    setPersonSpeaking,
     setMediaAdapter,
     attachMediaStream,
     detachMediaStream,

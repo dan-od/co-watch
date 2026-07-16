@@ -85,6 +85,7 @@ export function createSync(ctx) {
       }
       $('resync').disabled = false;
       $('tracks-btn').hidden = !player?.el; // subtitles/audio only on the native player
+      $('live-chip').hidden = false; // topbar "Live" pulse while synced playback runs
       ctx.mixer.setMediaAdapter(player); // route movie volume through the mixer's media channel
     } catch (err) {
       notice(`Could not load: ${err.message || err}`, 'error');
@@ -102,6 +103,7 @@ export function createSync(ctx) {
     ctx.mixer.setMediaAdapter(null);
     $('sync-player').replaceChildren();
     $('resync').disabled = true;
+    $('live-chip').hidden = true;
     ctx.tracks.releaseSubs(); // hides the tracks button/panel + revokes subtitle blob URLs
   }
 

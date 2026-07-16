@@ -186,6 +186,7 @@ export function createTiles(ctx) {
     if (muted) {
       t.root.classList.remove('speaking'); // a muted mic can't be speaking
       t.chip?.classList.remove('speaking');
+      if (key !== 'self') ctx.mixer?.setPersonSpeaking?.(key, false);
     }
   }
 
@@ -317,6 +318,7 @@ export function createTiles(ctx) {
       const speaking = Math.sqrt(sum / t.data.length) > SPEAKING_THRESHOLD;
       t.root.classList.toggle('speaking', speaking);
       t.chip?.classList.toggle('speaking', speaking);
+      if (key !== 'self') ctx.mixer?.setPersonSpeaking?.(key, speaking); // mixer sub-label (de-dupes internally)
       if (speaking) {
         t.lastSpokeAt = now;
         if (!t.speakStart) t.speakStart = now;

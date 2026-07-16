@@ -13,6 +13,7 @@ export function createSignaling(ctx) {
   let selfId = sessionStorage.getItem('cowatch_peer_id') || null;
   let members = new Map(); // peerId → { name } (others only, not self)
   let shareHolderId = null;
+  let seenRoomState = false; // first room-state = our own arrival, not others joining
   let rejected = false;
   let shareBaton = 'free'; // 'free' | 'mine' | 'peer' — one active sharer, server-arbitrated
   let netSignaling = 'connecting'; // 'connecting' | 'connected' | 'reconnecting'
@@ -114,6 +115,15 @@ export function createSignaling(ctx) {
         } else {
           shareBaton = 'free';
         }
+
+        // Chat log keeps a trace of arrivals/departures. The FIRST room-state
+        // is our own arrival — announcing everyone already here would be noise.
+        if (seenRoomState) {
+          for (const [id, m] of members) if (!prev.has(id)) ctx.chat.appendSystem(`${m.name || 'Someone'} joined`);
+          for (const [id, m] of prev) if (!members.has(id)) ctx.chat.appendSystem(`${m.name || 'Someone'} left`);
+        }
+        seenRoomState = true;
+        ctx.chat.setOnlineCount(members.size + 1); // + yourself
 
         // Mesh: connections follow membership (tiles are removed by media
         // after its per-peer grace window, not here).
