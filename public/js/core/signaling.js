@@ -184,7 +184,7 @@ export function createSignaling(ctx) {
         break;
       case 'sync-load':
         ctx.controls.setMode('sync');
-        await ctx.syncMode.handleRemoteLoad(msg.source);
+        await ctx.syncMode.handleRemoteLoad(msg.source, nameOf(msg.from));
         break;
       case 'sync':
         await ctx.syncCore.applyRemoteSync(msg);

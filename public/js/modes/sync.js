@@ -21,7 +21,6 @@ export function createSyncMode(ctx) {
     sourceMode = m;
     $('source-url').classList.toggle('active', m === 'url');
     $('source-torbox').classList.toggle('active', m === 'torbox');
-    $('source-search').classList.toggle('active', m === 'search');
     $('source-stremio').classList.toggle('active', m === 'stremio');
     $('sync-input').placeholder =
       m === 'torbox'
@@ -40,7 +39,6 @@ export function createSyncMode(ctx) {
   }
   $('source-url').addEventListener('click', () => setSourceMode('url'));
   $('source-torbox').addEventListener('click', () => setSourceMode('torbox'));
-  $('source-search').addEventListener('click', () => setSourceMode('search'));
   $('source-stremio').addEventListener('click', () => setSourceMode('stremio'));
 
   $('sync-form').addEventListener('submit', (e) => {
@@ -72,21 +70,12 @@ export function createSyncMode(ctx) {
     signal({ type: 'sync-load', source });
   }
 
-  async function handleRemoteLoad(source) {
+  async function handleRemoteLoad(source, fromName) {
     if (source.kind === 'stremio') {
-      // Re-resolve from OUR own add-on (add-on URLs are debrid/IP-locked).
-      const url = await ctx.stremio.resolveForPeer(source);
-      if (url) {
-        ctx.tracks.setTorrentSubs(null);
-        await loadSource({ ...source, resolvedUrl: url });
-        return;
-      }
-      if (source.resolvedUrl) {
-        ctx.tracks.setTorrentSubs(null);
-        await loadSource(source); // last resort: the sharer's URL (may be IP-locked)
-        return;
-      }
-      notice('Load your Stremio add-on (Sync → Stremio) to follow this stream.', 'warn');
+      // The Stremio module owns the whole follow flow: borrow the sharer's
+      // add-on if we have none (Part C), re-resolve (URLs are debrid/IP-locked),
+      // load, and wire subtitles.
+      await ctx.stremio.followStream(source, fromName);
       return;
     }
     if (source.kind === 'torbox') {

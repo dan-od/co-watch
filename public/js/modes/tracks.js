@@ -10,6 +10,7 @@ import { torboxPost, getKey } from '../lib/torbox.js';
 
 export function createTracks(ctx) {
   let currentTorrentSubs = null; // { torrentId, files: [{id, name}] }
+  let currentAddonSubs = null; // [{ lang, url, id? }] from a Stremio add-on
   let subBlobUrls = [];
 
   const player = () => ctx.syncCore.getPlayer();
@@ -20,6 +21,12 @@ export function createTracks(ctx) {
     currentTorrentSubs = subs.length ? { torrentId: meta.torrentId, files: subs } : null;
   }
 
+  // Subtitles offered by a Stremio add-on (its /subtitles resource or a stream's
+  // own `subtitles` array): [{ lang, url }]. Lazy-loaded from the CC panel.
+  function setAddonSubs(subs) {
+    currentAddonSubs = Array.isArray(subs) && subs.length ? subs : null;
+  }
+
   function srtToVtt(text) {
     const noBom = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
     const body = noBom.replace(/\r/g, '');
@@ -27,10 +34,11 @@ export function createTracks(ctx) {
     return 'WEBVTT\n\n' + body.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
   }
 
-  function addSubtitleTrack(label, vttText) {
+  // Accepts raw .srt or .vtt — converts to VTT (idempotent) before blobbing.
+  function addSubtitleTrack(label, text) {
     const el = player()?.el;
     if (!el) return;
-    const url = URL.createObjectURL(new Blob([vttText], { type: 'text/vtt' }));
+    const url = URL.createObjectURL(new Blob([srtToVtt(text)], { type: 'text/vtt' }));
     subBlobUrls.push(url);
     const track = document.createElement('track');
     track.kind = 'subtitles';
@@ -105,6 +113,29 @@ export function createTracks(ctx) {
       }
     }
 
+    const addonBox = $('addon-subs');
+    addonBox.replaceChildren();
+    if (currentAddonSubs) {
+      const h = document.createElement('p');
+      h.className = 'hint';
+      h.textContent = 'From the add-on:';
+      addonBox.append(h);
+      for (const sub of currentAddonSubs) {
+        const row = document.createElement('div');
+        row.className = 'track-row';
+        const name = document.createElement('span');
+        name.className = 'track-name';
+        name.textContent = sub.lang || sub.id || 'Subtitle';
+        name.title = name.textContent;
+        const btn = document.createElement('button');
+        btn.className = 'ghost';
+        btn.textContent = 'Load';
+        btn.addEventListener('click', () => loadAddonSub(sub, btn));
+        row.append(name, btn);
+        addonBox.append(row);
+      }
+    }
+
     const audioList = $('audio-list');
     audioList.replaceChildren();
     const at = el?.audioTracks;
@@ -137,8 +168,25 @@ export function createTracks(ctx) {
         fileId: f.id,
       });
       if (!r?.success) throw new Error(r?.detail || 'could not fetch subtitle');
-      addSubtitleTrack(f.name.split('/').pop(), srtToVtt(r.text));
+      addSubtitleTrack(f.name.split('/').pop(), r.text);
       notice(`Subtitles loaded: ${f.name.split('/').pop()}`, 'ok', 3000);
+    } catch (err) {
+      notice(`Subtitle failed: ${err.message || err}`, 'error', 5000);
+      btn.disabled = false;
+      btn.textContent = 'Load';
+    }
+  }
+
+  // Fetch an add-on subtitle file through the SSRF-guarded proxy → add as track.
+  async function loadAddonSub(sub, btn) {
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const res = await fetch(`/api/stremio/subfile?url=${encodeURIComponent(sub.url)}`);
+      const j = await res.json().catch(() => null);
+      if (!j?.success) throw new Error(j?.detail || 'could not fetch subtitle');
+      addSubtitleTrack(sub.lang || sub.id || 'Subtitle', j.text);
+      notice(`Subtitles loaded: ${sub.lang || 'track'}`, 'ok', 3000);
     } catch (err) {
       notice(`Subtitle failed: ${err.message || err}`, 'error', 5000);
       btn.disabled = false;
@@ -165,20 +213,25 @@ export function createTracks(ctx) {
   $('sub-file-input').addEventListener('change', async () => {
     const file = $('sub-file-input').files[0];
     if (!file) return;
-    addSubtitleTrack(file.name, srtToVtt(await file.text()));
+    addSubtitleTrack(file.name, await file.text());
     notice(`Subtitles loaded: ${file.name}`, 'ok', 3000);
     $('sub-file-input').value = '';
   });
 
   return {
     setTorrentSubs,
+    setAddonSubs,
     renderTracksPanel,
     addSubtitleTrack,
     // Called by the sync engine when tearing down a player: drop this torrent's
-    // subtitle blobs and hide the tracks widget.
+    // subtitle blobs and hide the tracks widget. Add-on subs are cleared too
+    // (they're re-set per stream); torrent subs are left for the load paths to
+    // reset, since loadTorbox sets them just before the (teardown-triggering)
+    // load.
     releaseSubs: () => {
       $('tracks-btn').hidden = true;
       $('tracks-panel').hidden = true;
+      currentAddonSubs = null;
       for (const u of subBlobUrls) URL.revokeObjectURL(u);
       subBlobUrls = [];
     },

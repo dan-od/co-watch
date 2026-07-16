@@ -56,5 +56,7 @@ export async function resolveMagnet(apiKey, magnet, hash, { onProgress, poll = 3
   const file = videos[0];
   const dl = await torboxPost('/torbox/load', { apiKey, torrentId: meta.torrentId, fileId: file.id });
   if (!dl?.success || !dl.streamUrl) throw new Error(dl?.detail || 'could not get stream URL');
-  return { streamUrl: dl.streamUrl, fileName: file.name, magnet, hash };
+  // `meta` carries the full file list (incl. .srt/.vtt) + torrentId so callers
+  // can hand it to tracks.setTorrentSubs() for the CC panel.
+  return { streamUrl: dl.streamUrl, fileName: file.name, magnet, hash, meta };
 }

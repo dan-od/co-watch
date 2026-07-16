@@ -25,9 +25,15 @@ export function createStremio(ctx) {
   let manifest = null;
   let catalogs = [];
   let viewStack = []; // [{ label, render }] — top is the current view
+  // A follower who has no add-on of their own can borrow the sharer's, received
+  // over the wire (Part C). Kept in MEMORY ONLY — never written to localStorage,
+  // never shown in plain text — and gone the moment they leave (leave reloads).
+  let followAddon = null;
 
   const getAddonUrl = () => (localStorage.getItem(ADDON_KEY) || '').trim();
   const setAddonUrl = (url) => localStorage.setItem(ADDON_KEY, (url || '').trim());
+  // Own add-on wins; otherwise fall back to a sharer's borrowed one.
+  const getEffectiveAddon = () => getAddonUrl() || followAddon || '';
 
   const status = (text, kind = '') => {
     $('stremio-status').textContent = text;
@@ -49,7 +55,7 @@ export function createStremio(ctx) {
 
   // ---- proxy calls (add-on, via the SSRF-guarded server proxy) ----
   async function proxy(resource, params) {
-    const qs = new URLSearchParams({ url: getAddonUrl(), ...params });
+    const qs = new URLSearchParams({ url: getEffectiveAddon(), ...params });
     const res = await fetch(`/api/stremio/${resource}?${qs}`);
     const json = await res.json().catch(() => null);
     if (!json?.success) throw new Error(json?.detail || `Stremio ${resource} failed (HTTP ${res.status})`);
@@ -175,7 +181,7 @@ export function createStremio(ctx) {
 
   // ---- discovery: TMDb search (driven by the shared sync-input) ----
   async function run(query) {
-    if (!getAddonUrl()) {
+    if (!getEffectiveAddon()) {
       status('Paste a Stremio add-on URL and press Load first.', 'warn');
       return;
     }
@@ -540,12 +546,33 @@ export function createStremio(ctx) {
     return tags.slice(0, 6);
   }
 
+  const SHARE_ACK_KEY = 'stremio_share_ack';
+  const SHARE_WARNING =
+    'Heads up: sharing lets everyone in the room stream through YOUR debrid ' +
+    'account — your add-on link carries its keys. It is shared only while they ' +
+    'are here and is never saved on their devices. Share your add-on so keyless ' +
+    'friends can follow?';
+
+  // The add-on URL to attach to a broadcast (or '' to withhold it). We only have
+  // one to share if it's OUR own; and we ask for consent once. If we can't ask
+  // (no confirm) or the user declines, we withhold it — playback still works,
+  // watchers just need their own add-on. Declining leaves the flag unset, so
+  // we ask again next time.
+  function addonToShare() {
+    const own = getAddonUrl();
+    if (!own) return ''; // a follower has nothing of their own to re-share
+    if (localStorage.getItem(SHARE_ACK_KEY)) return own;
+    const ok = typeof window.confirm === 'function' && window.confirm(SHARE_WARNING);
+    if (ok) { localStorage.setItem(SHARE_ACK_KEY, '1'); return own; }
+    return '';
+  }
+
   // ---- playback ----
   async function play(stream, meta, btn) {
     btn.disabled = true;
     btn.textContent = 'Loading…';
     try {
-      const url = await resolveStream(stream, (p) => (btn.textContent = `Downloading ${Math.round(p * 100)}%`));
+      const { url, torrentMeta } = await resolveStream(stream, (p) => (btn.textContent = `Downloading ${Math.round(p * 100)}%`));
       if (!url) {
         notice('This stream has no playable source.', 'warn', 4000);
         btn.disabled = false;
@@ -560,8 +587,13 @@ export function createStremio(ctx) {
         title: meta.title,
         resolvedUrl: url,
       };
+      // Part C: let keyless friends follow on OUR add-on — but only after a
+      // one-time, eyes-open consent (the add-on URL embeds our debrid keys).
+      const shareAddon = addonToShare();
+      if (shareAddon) source.addonUrl = shareAddon;
       rememberMeta(source);
       await ctx.syncCore.loadSource(source);
+      applySubs(stream, meta, torrentMeta); // torrent + add-on subtitles → CC panel
       ctx.signaling.signal({ type: 'sync-load', source });
       ctx.syncMode.setSourceMode('torbox'); // reveal the player (hide the stremio panel)
       notice(`Streaming: ${meta.title}`, 'ok', 4000);
@@ -572,39 +604,85 @@ export function createStremio(ctx) {
     }
   }
 
-  // A Stremio stream → a playable URL. Direct `url` wins; otherwise an
-  // `infoHash` goes through TorBox.
+  // A Stremio stream → { url, torrentMeta }. Direct `url` wins; otherwise an
+  // `infoHash` goes through TorBox (whose meta carries any .srt/.vtt files).
   async function resolveStream(stream, onProgress) {
-    if (stream.url) return stream.url;
+    if (stream.url) return { url: stream.url, torrentMeta: null };
     if (stream.infoHash) {
       const apiKey = getKey();
       if (!apiKey) {
         notice('This stream needs a magnet resolver — enter your TorBox API key (gear icon).', 'warn', 4000);
         ctx.settings.openSettings(true);
-        return null;
+        return { url: null, torrentMeta: null };
       }
       const hash = String(stream.infoHash).toLowerCase();
       const magnet = infoHashToMagnet(hash, stream.sources, stream.name);
-      const { streamUrl } = await resolveMagnet(apiKey, magnet, hash, { onProgress });
-      return streamUrl;
+      const { streamUrl, meta } = await resolveMagnet(apiKey, magnet, hash, { onProgress });
+      return { url: streamUrl, torrentMeta: meta };
     }
-    return null;
+    return { url: null, torrentMeta: null };
   }
 
-  // Peer follows: re-resolve the same title from THEIR add-on (add-on URLs are
-  // debrid/IP-locked, so the sharer's resolvedUrl usually won't work for them).
-  async function resolveForPeer(source) {
-    if (!getAddonUrl()) return null;
+  // Feed subtitles into the CC panel: (B1) .srt/.vtt inside the torrent for an
+  // infoHash stream, (B2) a stream's own `subtitles` array, and (B3) the
+  // add-on's /subtitles resource for this id. Add-on subs are lazy-loaded from
+  // the panel (a title can carry dozens of languages).
+  async function applySubs(stream, meta, torrentMeta) {
+    ctx.tracks.setTorrentSubs(torrentMeta || null);
+    const subs = [];
+    const push = (s) => { if (s?.url) subs.push({ lang: s.lang || s.language || s.id || 'Subtitle', url: s.url }); };
+    for (const s of stream.subtitles || []) push(s); // B2
     try {
-      const data = await fetchStreams(source.type, source.streamId);
-      const streams = data.streams || [];
-      const pick =
-        streams.find((s) => s.name === source.name && (s.url || s.infoHash)) ||
-        streams.find((s) => s.url || s.infoHash);
-      if (!pick) return null;
-      return resolveStream(pick, () => {});
+      const data = await proxy('subtitles', { type: meta.type, id: meta.id }); // B3
+      for (const s of data?.subtitles || []) push(s);
     } catch {
-      return null;
+      // add-on has no /subtitles resource for this id — fine
+    }
+    const seen = new Set();
+    ctx.tracks.setAddonSubs(subs.filter((s) => (seen.has(s.url) ? false : seen.add(s.url))));
+    ctx.tracks.renderTracksPanel();
+  }
+
+  // A watcher follows the sharer's Stremio load. Re-resolve the same title from
+  // an add-on (add-on URLs are debrid/IP-locked, so the sharer's resolvedUrl
+  // usually won't play for us): our OWN add-on if we have one, else the sharer's
+  // borrowed one (Part C — held in memory only). Then load it, wire subtitles
+  // (Part B, watcher side), and show a "following {name}" note.
+  async function followStream(source, fromName) {
+    if (!getAddonUrl() && source.addonUrl) followAddon = source.addonUrl; // borrow, in memory
+    const addon = getEffectiveAddon();
+    if (!addon) {
+      notice('Load your Stremio add-on (Sync → Stremio) to follow this stream.', 'warn');
+      return false;
+    }
+    try {
+      let url = null;
+      let torrentMeta = null;
+      let chosen = null;
+      try {
+        const data = await fetchStreams(source.type, source.streamId);
+        const streams = data.streams || [];
+        chosen =
+          streams.find((s) => s.name === source.name && (s.url || s.infoHash)) ||
+          streams.find((s) => s.url || s.infoHash) ||
+          null;
+        if (chosen) ({ url, torrentMeta } = await resolveStream(chosen, () => {}));
+      } catch {
+        // fall through to the sharer's URL
+      }
+      if (!url && source.resolvedUrl) url = source.resolvedUrl; // last resort (may be IP-locked)
+      if (!url) {
+        notice('Could not resolve this stream from the add-on.', 'warn', 4000);
+        return false;
+      }
+      await ctx.syncCore.loadSource({ ...source, resolvedUrl: url });
+      if (chosen) applySubs(chosen, { type: source.type, id: source.streamId }, torrentMeta);
+      else ctx.tracks.setTorrentSubs(null);
+      notice(fromName ? `Following ${fromName}’s stream` : 'Following stream', 'ok', 4000);
+      return true;
+    } catch (err) {
+      notice(`Could not follow: ${err.message || err}`, 'warn', 4000);
+      return false;
     }
   }
 
@@ -619,12 +697,19 @@ export function createStremio(ctx) {
   }
 
   // Called by setSourceMode('stremio'): restore the saved add-on + its URL.
+  // A follower borrowing the sharer's add-on can search it too — but we never
+  // put that URL in the input (it's a secret); we just say so.
   function activate() {
     const saved = getAddonUrl();
-    if (saved) $('stremio-url').value = saved;
-    if (saved && !manifest) loadAddon(saved);
-    else if (!saved) status('Paste a Stremio add-on URL (…/manifest.json) and press Load.');
+    if (saved) {
+      $('stremio-url').value = saved;
+      if (!manifest) loadAddon(saved);
+    } else if (followAddon) {
+      status('Following the host’s add-on — search a title to browse it, or paste your own above.', 'ok');
+    } else {
+      status('Paste a Stremio add-on URL (…/manifest.json) and press Load.');
+    }
   }
 
-  return { run, activate, resolveForPeer };
+  return { run, activate, followStream };
 }
