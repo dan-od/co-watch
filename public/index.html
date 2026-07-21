@@ -133,6 +133,19 @@
             <div id="stremio-results"></div>
           </div>
 
+          <!-- Spectate (browse-cast): read-only cinematic mirror of the HOST's
+               Stremio browsing — search results, seasons, episodes, streams.
+               Fed by 'browse' signals; hidden when playback starts. -->
+          <div id="spectate-panel" hidden>
+            <div id="spectate-head">
+              <i class="live-dot"></i>
+              <span id="spectate-title">Someone is browsing</span>
+              <span class="hint spectate-hint">watch along — they drive</span>
+              <button id="spectate-close" class="ghost">Hide</button>
+            </div>
+            <div id="spectate-body"></div>
+          </div>
+
           <!-- Torlink: torrent search (YTS movies + EZTV TV) → TorBox resolve/stream. -->
           <div id="torlink-panel" hidden>
             <div id="torlink-head">

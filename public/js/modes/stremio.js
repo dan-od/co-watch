@@ -40,12 +40,37 @@ export function createStremio(ctx) {
     $('stremio-status').className = `hint ${kind}`;
   };
 
+  // ---- browse-cast (host side of spectate) ----
+  // Lean, public-metadata-only snapshots of what we're browsing so watchers
+  // follow along read-only (modes/spectate.js renders them). NEVER includes
+  // the add-on URL or any key — names, posters, backdrops only. Views carry
+  // their snapshot as `cast`, broadcast on every render — so Back re-casts
+  // the restored view for free.
+  const castBrowse = (data) => {
+    try {
+      ctx.signaling.signal({ type: 'browse', data });
+    } catch {
+      // not connected yet — browsing alone is fine
+    }
+  };
+  const gridCast = (label, metas) => ({
+    view: 'grid',
+    label,
+    items: metas.slice(0, 24).map((m) => ({
+      name: m.name,
+      poster: m.poster || '',
+      year: m.year || '',
+      kind: isSeries(m.type) ? 'Series' : 'Movie',
+    })),
+  });
+
   // ---- view stack / breadcrumb ----
   function renderTop() {
     const top = viewStack[viewStack.length - 1];
     $('stremio-nav').hidden = viewStack.length <= 1;
     $('stremio-crumb').textContent = viewStack.map((v) => v.label).join('  ›  ');
     top?.render();
+    if (top?.cast) castBrowse(top.cast);
   }
   function resetView(view) { viewStack = [view]; renderTop(); }
   function pushView(view) { viewStack.push(view); renderTop(); }
@@ -171,7 +196,11 @@ export function createStremio(ctx) {
         type: m.type || cat.type,
         id: m.id, // already a Stremio id
       }));
-      resetView({ label: cat.name || cat.id, render: () => renderGrid(metas) });
+      resetView({
+        label: cat.name || cat.id,
+        render: () => renderGrid(metas),
+        cast: gridCast(cat.name || cat.id, metas),
+      });
       status(`${metas.length} title${metas.length === 1 ? '' : 's'}.`, metas.length ? 'ok' : '');
     } catch (err) {
       status(`Catalog failed: ${err.message || err}`, 'warn');
@@ -209,7 +238,11 @@ export function createStremio(ctx) {
         tmdbId: m.id,
         year: m.year,
       }));
-      resetView({ label: `“${query}”`, render: () => renderGrid(metas) });
+      resetView({
+        label: `“${query}”`,
+        render: () => renderGrid(metas),
+        cast: gridCast(`Searching “${query}”`, metas),
+      });
       status(`${metas.length} result${metas.length === 1 ? '' : 's'}.`, metas.length ? 'ok' : '');
     } catch (err) {
       status(`Search failed: ${err.message || err}`, 'warn');
@@ -277,7 +310,23 @@ export function createStremio(ctx) {
       if (isSeries(item.type)) {
         const info = await loadSeasons(tmdbId);
         const n = info?.seasons?.length || 0;
-        pushView({ label: item.name || 'Series', render: () => renderSeasons(item, baseId, tmdbId, info) });
+        pushView({
+          label: item.name || 'Series',
+          render: () => renderSeasons(item, baseId, tmdbId, info),
+          cast: n
+            ? {
+                view: 'seasons',
+                title: {
+                  name: item.name || 'Series',
+                  poster: item.poster || '',
+                  backdrop: info.backdrop || item.backdrop || '',
+                  year: item.year || '',
+                  overview: (info.overview || item.overview || '').slice(0, 300),
+                },
+                seasons: info.seasons.map((s) => ({ number: s.number, count: s.count })),
+              }
+            : undefined,
+        });
         status(
           n
             ? `${n} season${n === 1 ? '' : 's'} — expand one to pick an episode.`
@@ -418,6 +467,19 @@ export function createStremio(ctx) {
       const eps = await loadEpisodes(tmdbId, s.number, s.count);
       epList.replaceChildren();
       for (const ep of eps) epList.append(buildEpisodeRow(name, baseId, s.number, ep, art));
+      castBrowse({
+        view: 'episodes',
+        title: { name, backdrop: art?.backdrop || '' },
+        season: s.number,
+        episodes: eps.slice(0, 40).map((e) => ({
+          number: e.number,
+          name: e.name || '',
+          air: e.air || '',
+          still: e.still || '',
+          runtime: e.runtime || 0,
+          overview: (e.overview || '').slice(0, 220),
+        })),
+      });
     };
     header.addEventListener('click', (e) => { if (e.target !== toggle) open(); });
     toggle.addEventListener('click', open);
@@ -522,7 +584,28 @@ export function createStremio(ctx) {
     try {
       const data = await fetchStreams(type, id);
       const streams = data.streams || [];
-      pushView({ label: title, render: () => renderStreams(streams, { type, id, title, art }) });
+      // Pre-sort by audio compatibility (renderStreams' internal stable sort of
+      // an already-ordered list is a no-op) so the watcher cast matches what
+      // the host actually sees.
+      const ranked = streams
+        .map((s, i) => ({ s, i, r: audioRank(s) }))
+        .sort((a, b) => a.r - b.r || a.i - b.i)
+        .map((x) => x.s);
+      pushView({
+        label: title,
+        render: () => renderStreams(ranked, { type, id, title, art }),
+        cast: {
+          view: 'streams',
+          title,
+          backdrop: art?.backdrop || '',
+          streams: ranked.slice(0, 30).map((s) => ({
+            name: cleanName(s.name || s.title || 'Stream'),
+            desc: descLine(s),
+            tags: parseTags(s),
+            warn: audioRank(s) === 2,
+          })),
+        },
+      });
       status(`${streams.length} stream${streams.length === 1 ? '' : 's'}.`, streams.length ? 'ok' : '');
     } catch (err) {
       status(`Streams failed: ${err.message || err}`, 'warn');
@@ -704,6 +787,7 @@ export function createStremio(ctx) {
       rememberMeta(source);
       await ctx.syncCore.loadSource(source);
       applySubs(stream, meta, torrentMeta); // torrent + add-on subtitles → CC panel
+      castBrowse({ view: 'none' }); // browsing is over — watchers' spectate closes
       ctx.signaling.signal({ type: 'sync-load', source });
       ctx.syncMode.setSourceMode('torbox'); // reveal the player (hide the stremio panel)
       notice(`Streaming: ${meta.title}`, 'ok', 4000);

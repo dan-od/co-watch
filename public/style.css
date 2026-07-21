@@ -1465,3 +1465,62 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   .hero-body h2 { font-size: 1.15rem; }
   .hero-overview { -webkit-line-clamp: 2; font-size: 0.72rem; }
 }
+
+/* ---- Spectate (browse-cast): read-only mirror of the host's browsing ---- */
+#spectate-panel {
+  position: absolute; inset: 0;
+  z-index: 15; /* over the local source panels — the room is following the host */
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  overflow: hidden;
+}
+#spectate-head { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+#spectate-head .live-dot { flex: none; }
+#spectate-title {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.spectate-hint { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#spectate-close { flex: none; padding: 0.25rem 0.7rem; font-size: 0.78rem; }
+#spectate-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.spectate-label {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.spectate-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.spectate-chip {
+  font-size: 0.72rem;
+  color: var(--text);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  background: var(--panel-2);
+  white-space: nowrap;
+}
+/* Read-only: the host drives — nothing in here looks pressable */
+#spectate-panel .poster-card { cursor: default; }
+#spectate-panel .poster-card:hover {
+  transform: none;
+  border-color: var(--hairline);
+  box-shadow: none;
+}
+#spectate-panel .torrent-item:hover { border-color: var(--hairline); }

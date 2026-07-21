@@ -194,7 +194,12 @@ export function createSignaling(ctx) {
         break;
       case 'sync-load':
         ctx.controls.setMode('sync');
+        ctx.spectate.hide(); // the movie is starting — browsing mirror closes
         await ctx.syncMode.handleRemoteLoad(msg.source, nameOf(msg.from));
+        break;
+      case 'browse':
+        // Host's Stremio browsing, mirrored read-only (modes/spectate.js).
+        ctx.spectate.show(msg.data, nameOf(msg.from));
         break;
       case 'sync':
         await ctx.syncCore.applyRemoteSync(msg);
