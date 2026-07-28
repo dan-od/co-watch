@@ -65,18 +65,40 @@ export function createStremio(ctx) {
   });
 
   // ---- view stack / breadcrumb ----
+  // Browser-Back integration: whenever we're deeper than the root discovery
+  // view we keep ONE history entry armed (a "trap", same URL so the address bar
+  // doesn't change). The browser Back button then pops a view instead of
+  // leaving the room; popstate re-arms while still deep. Without this, Back
+  // walked straight off /r/<id> back to the landing page.
+  let backTrapped = false;
+  function syncBackTrap() {
+    if (viewStack.length > 1 && !$('stremio-panel').hidden && !backTrapped) {
+      try { history.pushState({ cowatchStremio: true }, ''); backTrapped = true; } catch { /* history unavailable */ }
+    }
+  }
   function renderTop() {
     const top = viewStack[viewStack.length - 1];
     $('stremio-nav').hidden = viewStack.length <= 1;
     $('stremio-crumb').textContent = viewStack.map((v) => v.label).join('  ›  ');
     top?.render();
     if (top?.cast) castBrowse(top.cast);
+    syncBackTrap();
   }
   function resetView(view) { viewStack = [view]; renderTop(); }
   function pushView(view) { viewStack.push(view); renderTop(); }
   function popView() { if (viewStack.length > 1) { viewStack.pop(); renderTop(); } }
 
-  $('stremio-back').addEventListener('click', popView);
+  // UI Back routes through history so both stay in sync (fires popstate → pop).
+  $('stremio-back').addEventListener('click', () => {
+    if (backTrapped) history.back();
+    else popView();
+  });
+  window.addEventListener?.('popstate', () => {
+    if (!backTrapped) return; // not our trap — let the browser navigate normally
+    backTrapped = false; // the browser just consumed our entry
+    if ($('stremio-panel').hidden) return; // browsing isn't on screen — ignore
+    popView(); // pops one level; renderTop re-arms a fresh trap if still deep
+  });
 
   // ---- proxy calls (add-on, via the SSRF-guarded server proxy) ----
   async function proxy(resource, params) {
@@ -623,16 +645,27 @@ export function createStremio(ctx) {
       );
     }
     if (!streams.length) { emptyMsg(container, 'No streams available for this title.'); return; }
-    // Prefer browser-playable audio: float AAC/Opus streams up and sink
-    // DTS/TrueHD/Atmos (which play silently in-browser) down. Stable sort keeps
-    // the add-on's quality order within each compatibility tier.
+    // Prefer audio THIS browser can actually decode: float playable streams up,
+    // sink the silent ones. Stable sort keeps the add-on's quality order within
+    // each tier.
     const ranked = streams.map((s, i) => ({ s, i, r: audioRank(s) }));
     ranked.sort((a, b) => a.r - b.r || a.i - b.i);
     const risky = ranked.filter((x) => x.r === 2).length;
-    if (risky && risky < ranked.length) {
-      const tip = document.createElement('p');
+    const playable = ranked.filter((x) => x.r === 0).length; // confirmed sound HERE
+    if (!playable) {
+      // Not one stream is confirmed browser-playable. For debrid movie files
+      // that's the norm — they're Dolby/DTS, and the unlabeled ones almost
+      // always are too. Say so prominently rather than leave a silent surprise.
+      const banner = document.createElement('div');
+      banner.className = 'audio-banner';
+      banner.textContent = browserPlaysDolby()
+        ? 'Heads-up: none of these are confirmed to have browser-playable audio — most are DTS/lossless, so expect many to play silently.'
+        : 'Heads-up: none of these have confirmed sound in this browser — the files use Dolby/DTS audio that Chrome & Firefox can’t decode (the picture plays, but silent). Dolby (DD / DD+) streams DO play in Microsoft Edge or Safari — open the room there for sound.';
+      container.append(banner);
+    } else if (risky) {
+      const tip = document.createElement('div');
       tip.className = 'hint';
-      tip.textContent = `${risky} stream${risky === 1 ? '' : 's'} use lossless audio (DTS/TrueHD/Atmos) that plays silently in a browser — those are marked ⚠ and sorted last.`;
+      tip.textContent = `${risky} stream${risky === 1 ? '' : 's'} won’t have sound in this browser (Dolby/DTS audio) — marked ⚠ and sorted last.`;
       container.append(tip);
     }
     const list = document.createElement('div');
@@ -656,7 +689,7 @@ export function createStremio(ctx) {
     info.append(nm);
 
     const tags = parseTags(stream);
-    if (audioRank(stream) === 2) tags.unshift({ label: '⚠ no browser audio', cls: 'warn' });
+    if (audioRank(stream) === 2) tags.unshift({ label: '⚠ no sound here', cls: 'warn' });
     if (tags.length) {
       const badges = document.createElement('div');
       badges.className = 'badges';
@@ -664,7 +697,7 @@ export function createStremio(ctx) {
         const b = document.createElement('span');
         b.className = `badge badge-${t.cls}`;
         b.textContent = t.label;
-        if (t.cls === 'warn') b.title = 'This stream’s audio (DTS/TrueHD/Atmos) usually plays silently in a browser — pick an AAC/AC3 stream, or expect no sound.';
+        if (t.cls === 'warn') b.title = 'This browser can’t decode this stream’s audio (Dolby/DTS) — the video will play silently. Dolby streams work in Edge/Safari; DTS needs a desktop player.';
         badges.append(b);
       }
       info.append(badges);
@@ -703,16 +736,41 @@ export function createStremio(ctx) {
   }
   const streamText = (stream) => `${stream.name || ''} ${stream.description || stream.title || ''}`;
 
-  // Browser audio-codec compatibility: 0 = decodes in Chrome (AAC/Opus/MP3…),
-  // 2 = usually SILENT in-browser (DTS/TrueHD/Atmos — object/lossless tracks a
-  // <video> can't decode → picture plays, no sound), 1 = unknown/borderline
-  // (AC3/E-AC3 Dolby Digital — inconsistent). Drives the warn badge + ordering.
+  // What audio codecs can THIS browser actually decode in a <video>? We ask the
+  // browser instead of guessing: Dolby (AC-3/E-AC-3) ships in Edge & Safari but
+  // NOT Chrome/Firefox (licensing); DTS/TrueHD ship in ~nothing; AAC everywhere.
+  // Debrid movie files are almost all Dolby/DTS, so on Chrome they play the
+  // picture with NO SOUND — the real cause behind "audio isn't coming through".
+  let _audioSupport = null;
+  function audioSupport() {
+    if (_audioSupport) return _audioSupport;
+    let v;
+    try { v = document.createElement('video'); } catch { v = null; }
+    const can = (codec) => {
+      if (!v?.canPlayType) return false;
+      const r = v.canPlayType(`audio/mp4; codecs="${codec}"`);
+      return r === 'probably' || r === 'maybe';
+    };
+    _audioSupport = {
+      aac: can('mp4a.40.2') || can('mp4a.40.5') || true, // AAC is universal
+      ac3: can('ac-3'),
+      eac3: can('ec-3'),
+      // DTS/TrueHD have no positive canPlayType anywhere → always false.
+    };
+    return _audioSupport;
+  }
+  const browserPlaysDolby = () => audioSupport().ac3 || audioSupport().eac3;
+
+  // Playback rank for THIS browser: 0 = has sound here, 2 = silent here
+  // (codec this browser can't decode), 1 = unknown (no codec advertised).
   function audioRank(stream) {
     const text = streamText(stream);
-    if (/\bdts(-hd)?(\s?ma)?\b|\bdts-?x\b|\btrue-?hd\b|\batmos\b/i.test(text)) return 2;
+    const sup = audioSupport();
+    if (/\bdts(-hd)?(\s?ma)?\b|\bdts-?x\b|\btrue-?hd\b|\batmos\b/i.test(text)) return 2; // ~no browser
     if (/\baac\b|\bopus\b|\bmp3\b|\bvorbis\b|\bflac\b/i.test(text)) return 0;
-    if (/\be-?ac-?3\b|\beac3\b|\bac-?3\b|\bdd\+?\b|\bddp\b|dolby\s?digital/i.test(text)) return 1;
-    return 1;
+    if (/\be-?ac-?3\b|\beac3\b|\bdd\s?\+|\bddp\b/i.test(text)) return sup.eac3 ? 0 : 2; // Dolby Digital Plus
+    if (/\bac-?3\b|\bdd\b|dolby\s?digital/i.test(text)) return sup.ac3 ? 0 : 2; // Dolby Digital
+    return 1; // unadvertised — could be anything
   }
 
   // Best-effort quality badges parsed from name + description.
@@ -731,7 +789,11 @@ export function createStremio(ctx) {
     else if (/\bblu-?ray\b|\bbdrip\b/i.test(text)) add('BluRay', 'src');
     else if (/\bweb-?dl\b|\bwebrip\b|\bweb\b/i.test(text)) add('WEB', 'src');
     if (/\batmos\b/i.test(text)) add('Atmos', 'aud');
-    else if (/\bdts(-hd)?\b|\btruehd\b|\beac3\b|\bddp?\s?5\.1\b|\bac3\b/i.test(text)) add('DTS', 'aud');
+    else if (/\btrue-?hd\b/i.test(text)) add('TrueHD', 'aud');
+    else if (/\bdts(-hd)?(\s?ma)?\b|\bdts-?x\b/i.test(text)) add('DTS', 'aud');
+    else if (/\be-?ac-?3\b|\beac3\b|\bdd\s?\+|\bddp\b/i.test(text)) add('DD+', 'aud');
+    else if (/\bac-?3\b|\bdd\b|dolby\s?digital/i.test(text)) add('DD', 'aud');
+    else if (/\baac\b/i.test(text)) add('AAC', 'aud');
     if (/\bhevc\b|\bx265\b|\bh\.?265\b/i.test(text)) add('HEVC', 'codec');
     else if (/\bav1\b/i.test(text)) add('AV1', 'codec');
     const seeders = text.match(/👤\s?(\d+)/);

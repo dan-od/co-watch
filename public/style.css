@@ -1524,3 +1524,16 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   box-shadow: none;
 }
 #spectate-panel .torrent-item:hover { border-color: var(--hairline); }
+
+/* Prominent audio-incompatibility banner (Dolby/DTS can't decode in-browser) */
+.audio-banner {
+  flex: none;
+  margin: 0 0 2px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #e8a08c;
+  background: rgba(203, 90, 62, 0.12);
+  border: 1px solid rgba(203, 90, 62, 0.55);
+  border-radius: 2px;
+}
