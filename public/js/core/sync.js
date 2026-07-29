@@ -76,7 +76,10 @@ export function createSync(ctx) {
             source.kind === 'torbox'
               ? 'This link requires your own TorBox account — paste the same magnet after adding your key.'
               : source.kind === 'stremio'
-                ? 'This stream needs your own Stremio add-on — open Sync → Stremio and load your add-on.'
+                ? // Debrid links are tied to the sharer's account/IP, so a followed
+                  // URL often dies on someone else's machine. Name that, and point
+                  // at the Stremio TAB (it stopped living under Sync).
+                  'That stream would not play here — debrid links are usually locked to the sharer’s account. Open the Stremio tab and load your own add-on to resolve it yourself.'
                 : 'Could not load this video — the host may block cross-site playback (CORS) or the format is unsupported.',
             'error'
           );
