@@ -3,6 +3,7 @@
 
 import { $ } from '../lib/dom.js';
 import { torboxPost, getKey } from '../lib/torbox.js';
+import { checkTurn } from '../lib/turn-check.js';
 
 export function createSettings(ctx) {
   const getTmdbKey = () => (localStorage.getItem('tmdb_api_key') || '').trim();
@@ -24,6 +25,28 @@ export function createSettings(ctx) {
   }
   bindEye('torbox-key', 'torbox-eye');
   bindEye('tmdb-key', 'tmdb-eye');
+
+  // ---- Relay (TURN) self-test ----
+  $('turn-test').addEventListener('click', async () => {
+    const btn = $('turn-test');
+    const out = $('turn-test-status');
+    btn.disabled = true;
+    out.className = 'key-status';
+    out.textContent = 'Testing the relay…';
+    try {
+      const r = await checkTurn();
+      out.textContent = r.verdict;
+      out.className = `key-status ${r.ok ? 'valid' : 'invalid'}`;
+      // Full detail (candidate types + every ICE error) for a deeper look.
+      console.info('[cowatch] relay test', r);
+      out.title = r.iceErrors?.length ? r.iceErrors.join('\n') : '';
+    } catch (err) {
+      out.textContent = `Relay test failed: ${err.message || err}`;
+      out.className = 'key-status invalid';
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   // ---- TorBox key ----
   $('torbox-key').value = getKey();
