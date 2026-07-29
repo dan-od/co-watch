@@ -870,3 +870,7 @@ input[type=range]::-moz-range-thumb{width:9px;height:13px;background:var(--gold)
   .react{animation-duration:1.2s !important}
   .spinner{animation-duration:2s !important}
 }
+
+/* Dolby that only THIS device can decode — audible here, silent for a viewer
+   on a platform without Dolby (Windows Chrome). */
+.s-meta .here-only{color:var(--gold)}

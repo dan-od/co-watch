@@ -607,10 +607,10 @@ export function createStremio(ctx) {
       const f = streamFacts(s);
       const lead = f.langs[0];
       if (!lead || NON_LANG.has(lead)) continue; // only leading languages are selectable
-      const cand = { lang: lead, stream: s, warn: f.warn, audio: f.audio, q: f.q };
+      const cand = { lang: lead, stream: s, warn: f.warn, audio: f.audio, q: f.q, rank: audioRank(s) };
       const prev = byLang.get(lead);
-      // prefer a release whose audio this browser can actually decode
-      if (!prev || (prev.warn && !cand.warn)) byLang.set(lead, cand);
+      // Prefer the most widely audible release: AAC > Dolby-here > unknown.
+      if (!prev || cand.rank < prev.rank) byLang.set(lead, cand);
     }
     const live = playing.streams.find((s) => streamKey(s) === playing.streamKey);
     const liveLangs = live ? streamLangs(live) : [];
@@ -732,8 +732,9 @@ export function createStremio(ctx) {
       list.append(p);
       return;
     }
-    const ok = streams.filter((s) => audioRank(s) !== 2);
-    const bad = streams.filter((s) => audioRank(s) === 2);
+    const ok = streams.filter((s) => audioRank(s) !== SILENT);
+    const bad = streams.filter((s) => audioRank(s) === SILENT);
+    const universal = ok.filter((s) => audioRank(s) === 0).length;
 
     if (!ok.length) {
       const banner = document.createElement('div');
@@ -742,6 +743,21 @@ export function createStremio(ctx) {
         ? 'None of these are confirmed to have browser-playable audio — most are DTS/lossless, so expect many to play silently.'
         : 'None of these have confirmed sound in this browser — the files use Dolby/DTS audio Chrome & Firefox can’t decode (the picture plays, but silent). Dolby (DD / DD+) streams DO play in Microsoft Edge or Safari.';
       list.append(banner);
+    } else if (universal) {
+      const tip = document.createElement('p');
+      tip.className = 'hint';
+      tip.style.padding = '4px 8px 0';
+      tip.textContent = `${universal} stream${universal === 1 ? '' : 's'} use AAC — the only audio every device in the room can hear. Those are listed first.`;
+      list.append(tip);
+    } else {
+      // Nothing here is universally audible. Say what actually works instead of
+      // leaving people to guess why one person hears it and another doesn't.
+      const tip = document.createElement('div');
+      tip.className = 'audio-banner';
+      tip.textContent = browserPlaysDolby()
+        ? 'No release here uses AAC, so sound depends on each person’s browser: the Dolby ones play for you, but stay silent for anyone on Chrome or Firefox. For sound everyone hears, play it in a desktop player and use Share instead.'
+        : 'No release here uses AAC, and this browser can’t decode Dolby — so these will play silently for you (Safari and Edge can). For sound everyone hears, play it in a desktop player and use Share instead.';
+      list.append(tip);
     }
     for (const s of ok) list.append(buildStreamRow(s));
     if (bad.length) {
@@ -789,6 +805,12 @@ export function createStremio(ctx) {
         const w = document.createElement('span');
         w.className = 'warn';
         w.textContent = ' ⚠ no browser audio';
+        a.append(w);
+      } else if (f.hereOnly) {
+        // Dolby this browser decodes — but a Windows/Chrome viewer won't.
+        const w = document.createElement('span');
+        w.className = 'here-only';
+        w.textContent = ' · sound on this device only';
         a.append(w);
       }
       rowLine.append(a);
@@ -853,7 +875,8 @@ export function createStremio(ctx) {
       langs: streamLangs(stream),
       peers: peers ? peers[1] : '',
       cached: !!stream.url, // debrid-resolved direct links start instantly
-      warn: audioRank(stream) === 2,
+      warn: audioRank(stream) === SILENT,
+      hereOnly: audioRank(stream) === 1, // Dolby: fine here, silent for some peers
       src: (stream.description || stream.title || stream.name || 'Stream')
         .split('\n')[0]
         .replace(/\s+/g, ' ')
@@ -884,15 +907,23 @@ export function createStremio(ctx) {
   }
   const browserPlaysDolby = () => audioSupport().ac3 || audioSupport().eac3;
 
+  // Rank for a WATCH-TOGETHER room, not just this machine:
+  //   0 — universal (AAC/Opus/MP3/FLAC): every device in the room hears it.
+  //   1 — Dolby this browser happens to decode: fine here, silent for someone
+  //       on a platform without Dolby (Windows Chrome most notably).
+  //   2 — no codec advertised: unknown.
+  //   3 — silent in THIS browser (DTS/TrueHD/Atmos, or Dolby without support).
+  // Sorting on this puts the "everyone can hear it" releases at the top.
   function audioRank(stream) {
     const text = streamText(stream);
     const sup = audioSupport();
-    if (/\bdts(-hd)?(\s?ma)?\b|\bdts-?x\b|\btrue-?hd\b|\batmos\b/i.test(text)) return 2;
-    if (/\baac\b|\bopus\b|\bmp3\b|\bvorbis\b|\bflac\b/i.test(text)) return 0;
-    if (/\be-?ac-?3\b|\beac3\b|\bdd\s?\+|\bddp\b/i.test(text)) return sup.eac3 ? 0 : 2;
-    if (/\bac-?3\b|\bdd\b|dolby\s?digital/i.test(text)) return sup.ac3 ? 0 : 2;
-    return 1;
+    if (/\bdts(-hd)?(\s?ma)?\b|\bdts-?x\b|\btrue-?hd\b|\batmos\b/i.test(text)) return 3; // ~no browser
+    if (/\baac\b|\bopus\b|\bmp3\b|\bvorbis\b|\bflac\b/i.test(text)) return 0; // plays everywhere
+    if (/\be-?ac-?3\b|\beac3\b|\bdd\s?\+|\bddp\b/i.test(text)) return sup.eac3 ? 1 : 3;
+    if (/\bac-?3\b|\bdd\b|dolby\s?digital/i.test(text)) return sup.ac3 ? 1 : 3;
+    return 2; // unadvertised — could be anything
   }
+  const SILENT = 3;
 
   // ---- playback ----
   function addonToShare() {
