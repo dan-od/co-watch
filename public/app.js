@@ -31,12 +31,6 @@ import { createPip } from './js/ui/pip.js';
 import { createSettings } from './js/ui/settings.js';
 import { createChat } from './js/ui/chat.js';
 
-// PWA: installable (standalone = no browser chrome on phones). The SW is a
-// network-passthrough — caching stays server-controlled.
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
-
 const roomMatch = location.pathname.match(/^\/r\/([\w-]{4,64})$/);
 
 // In the desktop app the page is served by a server on this machine, which
@@ -83,10 +77,11 @@ function showLanding() {
     if (e.key === 'Enter') join();
   });
 
-  if (window.__cowatchDesktop) {
-    $('landing-blurb').textContent =
-      'Watch something together. Create a room and send the code to up to five friends — everyone needs CoWatch open and the same room server set.';
-  }
+  // CoWatch is only ever used through the app now — every visitor here is a
+  // window this app opened, never a browser tab someone navigated to on
+  // purpose. So this is the one copy, not a desktop-vs-browser branch.
+  $('landing-blurb').textContent =
+    'Watch something together. Create a room and send the code to up to five friends — everyone needs CoWatch open and the same room server set.';
 }
 
 function randomRoomId() {
@@ -111,15 +106,11 @@ function getDisplayName() {
 
 function enterRoom(roomId) {
   $('room').hidden = false;
-  // In the app, this URL is 127.0.0.1 on a port that is different on every
-  // machine and every launch — worthless to a friend. The room CODE is the
-  // thing that travels, so that is what gets shown and copied.
-  if (window.__cowatchDesktop) {
-    $('room-link').value = roomId;
-    $('room-link').title = 'Room code — send this to your friends';
-  } else {
-    $('room-link').value = location.href;
-  }
+  // This page's own URL is 127.0.0.1 on a port that differs per machine and
+  // per launch — worthless to a friend. The room CODE is the thing that
+  // travels, so that is what gets shown and copied.
+  $('room-link').value = roomId;
+  $('room-link').title = 'Room code — send this to your friends';
 
   // Shared context hub. Siblings call across it at runtime (ctx.media.getPcs(),
   // ctx.controls.notice(), …). ctx.els are the chat nodes the Document PiP

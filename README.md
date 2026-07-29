@@ -1,12 +1,17 @@
 # CoWatch
 
-"Watch together" web app for up to six people: a WebRTC mesh (camera/mic +
-screen share + synced playback), with a tiny Node + `ws` signaling server. No
-accounts; rooms are ephemeral random links. See [cowatch-prd.md](cowatch-prd.md)
-for the full spec.
+"Watch together" desktop app (Mac + Windows) for up to six people: a WebRTC
+mesh (camera/mic + screen share + synced playback) plus a Stremio/TorBox
+picker with server-side audio repair. No accounts; rooms are ephemeral codes.
+See [cowatch-prd.md](cowatch-prd.md) for the full spec.
+
+CoWatch is installed, not visited — everyone watching together needs the app
+open. Each copy runs its own local server, so stream lookup and audio repair
+happen on each viewer's own machine and IP (the device debrid links are
+actually issued to), instead of on a server those hosts may refuse.
 
 The whole app is one fixed window (no page scroll): a top bar (wordmark, status
-dot, **Share / Sync** tabs, room link, TorBox settings gear), a stage (video +
+dot, **Share / Sync** tabs, room code, TorBox settings gear), a stage (video +
 collapsible chat rail + square camera tiles — partner ringed amber), and a
 bottom control bar (mode action on the left; Pop out / mic / camera / chat /
 leave on the right). Warm cinema palette, squared corners, Space Grotesk
@@ -16,15 +21,27 @@ wordmark.
 
 ```
 npm install
-npm start          # serves http://localhost:8080
+npm run app         # opens the CoWatch window
 ```
 
-Create a room on the landing page and open the `/r/<id>` link in a second
-browser/device.
+Create a room, then **Copy** the code and send it — friends paste it into
+"or enter a room code" on their own copy of the app.
 
-> **HTTPS required for real use:** `getUserMedia` only works in a secure
-> context. `localhost` counts; anything else needs real HTTPS (the PRD's
-> deployment plan is Cloudflare Tunnel).
+Only the room itself is shared between machines (chat, play/pause, the call).
+For that, one person needs to run a reachable signaling relay and everyone
+points **Room → Set room server…** at it:
+
+```
+npm start           # relay only — nobody opens this in a browser
+```
+
+Then tunnel that port (Cloudflare Tunnel is what the PRD assumes) and use the
+tunnel's HTTPS URL as the room server. `getUserMedia` needs a secure context,
+so `localhost` is fine for the relay itself, but anything reachable from
+another machine needs real HTTPS.
+
+Packaged installers: `npm run dist:mac` / `npm run dist:win` (electron-builder;
+unsigned builds trigger a Gatekeeper/SmartScreen warning on first launch).
 
 ## Configuration (environment variables)
 
