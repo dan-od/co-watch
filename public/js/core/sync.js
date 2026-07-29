@@ -63,7 +63,7 @@ function playbackErrorText(source, mediaError) {
   if (source?.transcode) {
     return code === 2
       ? 'The repaired stream stopped part-way — the source link probably expired. Pick the stream again.'
-      : 'The server could not repair this stream (check the server log for “[transcode]”). Try another release, or play it without the repair.';
+      : 'Could not repair this stream here. If someone else in the room already has it playing repaired, only one of you can at a time — the source link allows a single connection. Otherwise try another release, or play it without the repair.';
   }
 
   if (code === 4 /* SRC_NOT_SUPPORTED */) {
@@ -95,6 +95,7 @@ function playbackErrorText(source, mediaError) {
 export function createSync(ctx) {
   let player = null;
   let suppressUntil = 0;
+  let seekRestart = null; // debounce for transcode restarts (see onSeekOutside)
 
   async function loadSource(source) {
     destroyPlayer();
@@ -143,12 +144,17 @@ export function createSync(ctx) {
           baseTime: source.transcode ? startAt : 0,
           duration: source.transcode ? source.duration : 0,
           // Seeking past the buffered part of a piped transcode means
-          // restarting ffmpeg further in.
+          // restarting ffmpeg further in — which reopens the source link.
+          // Debounced, because dragging the scrubber emits a stream of seeks
+          // and each one used to fire its own reconnect at the host.
           onSeekOutside: source.transcode
             ? (t) => {
+                clearTimeout(seekRestart);
                 ctx.controls.notice('Jumping — re-encoding from there…', '', 2500);
-                loadSource({ ...source, startAt: t });
-                ctx.signaling.signal({ type: 'sync', action: 'seek', time: t, rate: 1 });
+                seekRestart = setTimeout(() => {
+                  loadSource({ ...source, startAt: t });
+                  ctx.signaling.signal({ type: 'sync', action: 'seek', time: t, rate: 1 });
+                }, 600);
               }
             : null,
         });
@@ -167,6 +173,7 @@ export function createSync(ctx) {
   }
 
   function destroyPlayer() {
+    clearTimeout(seekRestart);
     if (player) {
       try {
         player.destroy();

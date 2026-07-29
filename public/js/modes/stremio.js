@@ -1066,8 +1066,19 @@ export function createStremio(ctx) {
         // Probe first. It's the only chance to fail LOUDLY: once we hand the
         // URL to <video>, an unopenable source just looks like a black screen.
         try {
-          const r = await fetch(`/api/transcode/probe?url=${encodeURIComponent(url)}`);
-          const j = await r.json();
+          const askProbe = async (u) =>
+            (await fetch(`/api/transcode/probe?url=${encodeURIComponent(u)}`)).json();
+          let j = await askProbe(url);
+          // Gone for good? Get a fresh link for the same release and try once
+          // more, rather than making the viewer hunt for the reload button.
+          if (j?.ok === false && (j.status === 404 || j.status === 410)) {
+            if (q) q.textContent = '↻';
+            const fresh = await refreshStream(stream);
+            if (fresh?.url) {
+              source.resolvedUrl = fresh.url;
+              j = await askProbe(fresh.url);
+            }
+          }
           if (j && j.ok === false) {
             // ▶ still works: the browser may well be able to fetch a link the
             // server can't, it just won't have sound.
@@ -1115,6 +1126,24 @@ export function createStremio(ctx) {
     } finally {
       row.disabled = false;
       if (q) q.textContent = was;
+    }
+  }
+
+  // A debrid link that has gone 404 is dead for good — retrying it is
+  // pointless. Ask the add-on for this title again and find the same release,
+  // which usually comes back with a freshly signed URL.
+  async function refreshStream(stream) {
+    if (!pickerMeta?.type || !pickerMeta?.id) return null;
+    const ident = (s) => `${s.name || ''}|${s.description || s.title || ''}`;
+    try {
+      const data = await fetchStreams(pickerMeta.type, pickerMeta.id);
+      const list = Array.isArray(data?.streams) ? data.streams : [];
+      const match = list.find((s) => ident(s) === ident(stream));
+      if (!match) return null;
+      if (pickerMeta.streams) pickerMeta.streams = list; // keep the panel honest too
+      return match.url && match.url !== stream.url ? match : null;
+    } catch {
+      return null;
     }
   }
 

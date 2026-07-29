@@ -204,14 +204,91 @@ function startRelay(u) {
   });
 }
 
-function runFfmpeg(args) {
-  return new Promise((resolve) => {
-    const ff = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    let err = '';
-    ff.stderr.on('data', (d) => (err = (err + d).slice(-8000)));
-    ff.on('error', (e) => resolve(`Error opening input: ${e.message}`));
-    ff.on('close', () => resolve(err));
+// ---- one connection per link, ever -------------------------------------------
+// Debrid links are far more fragile than a normal URL: several of these hosts
+// allow a single connection at a time and answer everything else 404 — and at
+// least one of them appears to burn the link permanently when a second one
+// shows up. That is exactly what we were doing. Playing a repaired stream
+// opened it twice (probe, then playback), and every seek past the buffer
+// opened it again while the previous ffmpeg was still shutting down.
+//
+// So: before anything touches a URL, whatever is already on it is killed and
+// fully reaped first, with a short pause so the host actually sees the socket
+// close before the next request arrives.
+const inflight = new Map(); // href -> { kill, exited }
+const lastRelease = new Map(); // href -> when we last let go of it
+const queue = new Map(); // href -> promise chain, so claims are handled one at a time
+const SETTLE_MS = 500;
+
+// Claims run through a per-link chain. Without it this is check-then-act: the
+// waiting inside is async, so two seeks arriving together both saw an empty
+// slot, both waited, and both opened the link — measured three at once, which
+// is precisely the thing this is here to prevent.
+// `entry.key` identifies the exact request (link + offset + track). A DIFFERENT
+// key on the same link is the same viewer seeking, so the old one is replaced.
+// An IDENTICAL key is a second viewer asking for the same thing — replacing
+// that would yank the stream out from under whoever is already watching, so
+// the caller is told instead. (One connection per link is a hard limit of
+// these hosts; sharing one conversion between viewers needs the segmented
+// version, not this one.)
+class LinkBusy extends Error {}
+
+function claim(href, entry) {
+  const run = (queue.get(href) || Promise.resolve()).then(async () => {
+    const prev = inflight.get(href);
+    if (prev) {
+      if (prev.key && entry.key && prev.key === entry.key) throw new LinkBusy();
+      prev.kill();
+      await prev.exited.catch(() => {});
+    }
+    // Space consecutive connections apart even when nothing had to be killed —
+    // probe finishing and playback starting is back-to-back otherwise.
+    const since = Date.now() - (lastRelease.get(href) || 0);
+    if (since < SETTLE_MS) await new Promise((r) => setTimeout(r, SETTLE_MS - since));
+    inflight.set(href, entry);
   });
+  const tail = run.catch(() => {});
+  queue.set(href, tail);
+  tail.then(() => {
+    if (queue.get(href) === tail) queue.delete(href); // nothing else waiting
+  });
+  return run;
+}
+function releaseClaim(href, entry) {
+  if (inflight.get(href) === entry) inflight.delete(href);
+  lastRelease.set(href, Date.now());
+  if (lastRelease.size > 200) lastRelease.clear(); // it's only a spacing hint
+}
+
+// Runs ffmpeg holding the claim on `href`, so nothing else can be talking to
+// that link at the same time.
+function runFfmpeg(args, href) {
+  let ff = null;
+  let settle;
+  const exited = new Promise((r) => (settle = r));
+  const entry = {
+    kill: () => {
+      try {
+        ff?.kill('SIGKILL');
+      } catch {}
+    },
+    exited,
+  };
+  return (async () => {
+    if (href) await claim(href, entry);
+    return await new Promise((resolve) => {
+      ff = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
+      ff.stderr.on('data', (d) => (err = (err + d).slice(-8000)));
+      const finish = (text) => {
+        settle();
+        if (href) releaseClaim(href, entry);
+        resolve(text);
+      };
+      ff.on('error', (e) => finish(`Error opening input: ${e.message}`));
+      ff.on('close', () => finish(err));
+    });
+  })();
 }
 
 const PROBE_TAIL = ['-t', '0.1', '-f', 'null', '-'];
@@ -219,9 +296,10 @@ const PROBE_TAIL = ['-t', '0.1', '-f', 'null', '-'];
 // Read enough of the container to learn duration and the audio layout.
 async function probe(u) {
   // Fast path: let ffmpeg open the URL.
-  let text = await runFfmpeg([
-    '-hide_banner', '-user_agent', UA, '-headers', headerBlock(u), '-i', u.href, ...PROBE_TAIL,
-  ]);
+  let text = await runFfmpeg(
+    ['-hide_banner', '-user_agent', UA, '-headers', headerBlock(u), '-i', u.href, ...PROBE_TAIL],
+    u.href
+  );
   let via = 'direct';
 
   if (!/Duration:/.test(text)) {
@@ -237,7 +315,7 @@ async function probe(u) {
     }
     const relay = await startRelay(u);
     try {
-      text = await runFfmpeg(['-hide_banner', '-i', relay.url, ...PROBE_TAIL]);
+      text = await runFfmpeg(['-hide_banner', '-i', relay.url, ...PROBE_TAIL], u.href);
     } finally {
       relay.close();
     }
@@ -345,6 +423,41 @@ async function handleTranscode(req, res, url) {
     'pipe:1'
   );
 
+  // Take the link before opening it. A seek restarts ffmpeg further in, and
+  // without this the new one raced the old one onto the same URL.
+  let exitedResolve;
+  const claimEntry = {
+    key: `${start}|${track}|${viaProxy ? 'p' : 'd'}`,
+    kill: () => {
+      try {
+        ff?.kill('SIGKILL');
+      } catch {}
+    },
+    exited: new Promise((r) => (exitedResolve = r)),
+  };
+  try {
+    await claim(safe.href, claimEntry);
+  } catch (err) {
+    relay?.close();
+    if (err instanceof LinkBusy) {
+      sendJson(res, 409, {
+        success: false,
+        detail:
+          'someone else in the room is already playing this repaired stream, and the source link only allows one connection at a time',
+      });
+      return;
+    }
+    sendJson(res, 500, { success: false, detail: err.message || 'could not start' });
+    return;
+  }
+  if (res.writableEnded || res.destroyed) {
+    // The viewer gave up while we waited for the previous one to die.
+    releaseClaim(safe.href, claimEntry);
+    exitedResolve();
+    relay?.close();
+    return;
+  }
+
   active++;
   const ff = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   let done = false;
@@ -382,6 +495,7 @@ async function handleTranscode(req, res, url) {
       relay?.close(); // stop pulling from the source too
       ff.kill('SIGKILL'); // don't leave ffmpeg pulling gigabytes after a hang-up
     } catch {}
+    releaseClaim(safe.href, claimEntry);
   };
 
   // A host that accepts the connection then never sends anything would
@@ -405,11 +519,13 @@ async function handleTranscode(req, res, url) {
     errTail = (errTail + d.toString()).slice(-2000);
   });
   ff.on('error', (err) => {
+    exitedResolve();
     console.warn('[transcode] spawn failed:', err.message);
     cleanup();
     fail(500, `could not start the converter: ${err.message}`);
   });
   ff.on('close', (code) => {
+    exitedResolve(); // a queued request may be waiting for this link
     const reason = reasonFrom(errTail);
     if (code && code !== 255 && errTail.trim()) {
       console.warn(`[transcode] ffmpeg exited ${code} for ${safe.host} (via ${viaProxy ? 'proxy' : 'direct'}):\n${errTail.trim().slice(-800)}`);
