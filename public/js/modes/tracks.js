@@ -161,7 +161,7 @@ export function createTracks(ctx) {
     // loading a release that leads with another language — but only those are
     // offered, because swapping to a file whose primary track is still English
     // would look like it worked and change nothing.
-    const { options = [], alsoInFile = [] } = ctx.stremio?.getAudioOptions?.() || {};
+    const { options = [], alsoInFile = [], inFile = false } = ctx.stremio?.getAudioOptions?.() || {};
 
     if (options.length > 1) {
       for (const o of options) {
@@ -187,7 +187,11 @@ export function createTracks(ctx) {
         });
         audioList.append(row);
       }
-      hint('Each option loads that language’s release — everyone keeps their place.');
+      hint(
+        inFile
+          ? 'These are the tracks inside this file — repaired playback can reach them all. Everyone keeps their place.'
+          : 'Each option loads that language’s release — everyone keeps their place.'
+      );
     } else if (at && at.length === 1) {
       hint('Only one audio track in this video.');
     } else if (options.length === 1) {

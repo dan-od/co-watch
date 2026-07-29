@@ -120,9 +120,20 @@ export function createSync(ctx) {
         // fMP4 on the fly. The stream starts at `startAt`, so element time 0 is
         // that offset — the adapter reports absolute time via baseTime.
         const startAt = Math.max(0, Number(source.startAt) || 0);
-        const url = source.transcode
-          ? `/api/transcode?url=${encodeURIComponent(direct)}${startAt ? `&t=${Math.floor(startAt)}` : ''}`
-          : direct;
+        let url = direct;
+        if (source.transcode) {
+          const p = new URLSearchParams({ url: direct });
+          if (startAt) p.set('t', String(Math.floor(startAt)));
+          // Which audio track inside the file — picking blindly is how an
+          // "English, Hindi" release ends up playing Hindi.
+          if (Number.isInteger(source.audioIndex) && source.audioIndex >= 0) {
+            p.set('a', String(source.audioIndex));
+          }
+          // Hosts that refuse ffmpeg's own HTTP client get fetched by Node
+          // instead; probe worked out which one this source needs.
+          if (source.via === 'proxy') p.set('via', 'proxy');
+          url = `/api/transcode?${p}`;
+        }
         // The <video> element tells us WHY it failed — say that, instead of
         // blaming debrid for everything. Safari in particular cannot play .mkv
         // at ALL (unsupported container), which surfaces as SRC_NOT_SUPPORTED

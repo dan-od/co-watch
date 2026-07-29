@@ -601,6 +601,30 @@ export function createStremio(ctx) {
   //
   // Returns { options, alsoInFile } — the latter is informational only.
   function getAudioOptions() {
+    // Repaired playback is the one case where the tracks inside the file are
+    // actually reachable: ffmpeg picks the track, so switching means re-running
+    // the repair on a different one rather than loading a whole other release.
+    if (playing?.source?.transcode && playing.fileTracks?.length > 1) {
+      const seen = new Map();
+      return {
+        inFile: true, // these are tracks of ONE file, not separate releases
+        options: playing.fileTracks.map((t) => {
+          // switchAudio finds an option by its label, so two Japanese tracks
+          // have to end up with different names or the second is unreachable.
+          const base = t.label || t.lang || `Track ${t.index}`;
+          const n = (seen.get(base) || 0) + 1;
+          seen.set(base, n);
+          return {
+            lang: n > 1 ? `${base} (${n})` : base,
+            trackIndex: t.index,
+            audio: `${t.codec.toUpperCase()}${t.channels ? ` ${t.channels}` : ''}`,
+            warn: false,
+            current: t.index === playing.source.audioIndex,
+          };
+        }),
+        alsoInFile: [],
+      };
+    }
     if (!playing?.streams?.length) return { options: [], alsoInFile: [] };
     const byLang = new Map();
     for (const s of playing.streams) {
@@ -635,6 +659,17 @@ export function createStremio(ctx) {
       at = (await ctx.syncCore.getPlayer()?.getTime()) || 0;
     } catch {}
     notice(`Switching audio to ${lang}…`);
+
+    // Same file, different track: re-run the repair from where we are.
+    if (Number.isInteger(opt.trackIndex)) {
+      const source = { ...playing.source, audioIndex: opt.trackIndex, startAt: at };
+      playing = { ...playing, source };
+      await ctx.syncCore.loadSource(source);
+      ctx.signaling.signal({ type: 'sync-load', source });
+      notice(`Audio: ${lang}`, 'ok', 3000);
+      return true;
+    }
+
     try {
       const { url, torrentMeta } = await resolveStream(opt.stream, () => {});
       if (!url) throw new Error('no playable source');
@@ -1006,6 +1041,7 @@ export function createStremio(ctx) {
     const q = row.querySelector('.q');
     const was = q ? q.textContent : '';
     if (q) q.textContent = '…';
+    let fileTracks = []; // audio tracks probe found INSIDE the file (repair only)
     try {
       const { url, torrentMeta } = await resolveStream(stream, (p) => {
         if (q) q.textContent = `${Math.round(p * 100)}%`;
@@ -1043,6 +1079,15 @@ export function createStremio(ctx) {
             return;
           }
           if (j?.duration) source.duration = j.duration;
+          if (j?.via === 'proxy') source.via = 'proxy';
+          // Probe reads the real track list out of the file, so we can pick
+          // English rather than whatever happens to be track 0.
+          if (Number.isInteger(j?.audioIndex) && j.audioIndex >= 0) source.audioIndex = j.audioIndex;
+          fileTracks = Array.isArray(j?.tracks) ? j.tracks : [];
+          if (fileTracks.length > 1) {
+            const picked = fileTracks.find((t) => t.index === source.audioIndex);
+            if (picked?.label) notice(`Repairing audio · ${picked.label}`, '', 3000);
+          }
         } catch {
           // no duration — playback still works, the scrubber just shows —:—
         }
@@ -1054,6 +1099,10 @@ export function createStremio(ctx) {
         streams: pickerMeta.streams || [],
         meta: { type: pickerMeta.type, id: pickerMeta.id, title: pickerMeta.title },
         streamKey: streamKey(stream),
+        // Repaired playback can switch tracks WITHIN this file — the browser
+        // can't, which is why the audio menu normally has to swap releases.
+        source,
+        fileTracks,
       };
       closePicker();
       await ctx.syncCore.loadSource(source); // switches to the watch view
