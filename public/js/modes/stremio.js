@@ -586,39 +586,50 @@ export function createStremio(ctx) {
   // debrid files "switch audio track" really means "play the release that
   // carries that language". These are the alternatives for the CURRENT title,
   // one entry per language, resuming at the same timestamp.
-  // A file's FIRST listed language is the track the browser will actually
-  // default to — we can't isolate the others without audioTracks. So each
-  // language prefers a release that LEADS with it; a release that merely
-  // contains it is a fallback (flagged, because picking it may not change
-  // what you hear).
+  // Release tags that ride in the language field but aren't a language.
+  const NON_LANG = new Set(['Unknown', 'Dubbed', 'Subbed', 'Dual', 'Original', 'Audio']);
+
+  // Which audio can you ACTUALLY get in this browser?
+  //
+  // A file's FIRST listed language is the track the player defaults to, and
+  // without audioTracks we cannot select any other track inside that file. So
+  // an option is only real when some release LEADS with that language —
+  // offering "Japanese" because a mostly-English file happens to contain a
+  // Japanese track would load a different file and still play English.
+  // Verified against the live add-on: all 43 Inception releases lead with
+  // English, so the honest answer there is "English (+ Multi)", not 20 links.
+  //
+  // Returns { options, alsoInFile } — the latter is informational only.
   function getAudioOptions() {
-    if (!playing?.streams?.length) return [];
+    if (!playing?.streams?.length) return { options: [], alsoInFile: [] };
     const byLang = new Map();
     for (const s of playing.streams) {
       const f = streamFacts(s);
-      const langs = f.langs.length ? f.langs : ['Unknown'];
-      langs.forEach((lang, i) => {
-        const cand = { lang, stream: s, warn: f.warn, audio: f.audio, q: f.q, leads: i === 0 };
-        const prev = byLang.get(lang);
-        if (!prev) return void byLang.set(lang, cand);
-        // leading beats embedded; then playable audio beats silent
-        const better = (cand.leads && !prev.leads) || (cand.leads === prev.leads && prev.warn && !cand.warn);
-        if (better) byLang.set(lang, cand);
-      });
+      const lead = f.langs[0];
+      if (!lead || NON_LANG.has(lead)) continue; // only leading languages are selectable
+      const cand = { lang: lead, stream: s, warn: f.warn, audio: f.audio, q: f.q };
+      const prev = byLang.get(lead);
+      // prefer a release whose audio this browser can actually decode
+      if (!prev || (prev.warn && !cand.warn)) byLang.set(lead, cand);
     }
     const live = playing.streams.find((s) => streamKey(s) === playing.streamKey);
-    const playingFirst = live ? streamLangs(live)[0] || '' : '';
-    return [...byLang.values()].map((o) => ({
-      ...o,
-      current: streamKey(o.stream) === playing.streamKey && o.lang === playingFirst,
-      embedded: !o.leads, // only present inside a multi-language file
-    }));
+    const liveLangs = live ? streamLangs(live) : [];
+    return {
+      options: [...byLang.values()].map((o) => ({
+        ...o,
+        current: streamKey(o.stream) === playing.streamKey,
+      })),
+      // Extra tracks sitting inside the file we're playing — real, but not
+      // reachable from a browser that hides audioTracks.
+      alsoInFile: liveLangs.slice(1).filter((l) => !NON_LANG.has(l)),
+    };
   }
 
   // Swap the playing stream, keeping everyone's position.
   async function switchAudio(lang) {
-    const opt = getAudioOptions().find((o) => o.lang === lang);
+    const opt = getAudioOptions().options.find((o) => o.lang === lang);
     if (!opt || !playing) return false;
+    if (opt.current) return false; // already this release — nothing to swap
     let at = 0;
     try {
       at = (await ctx.syncCore.getPlayer()?.getTime()) || 0;

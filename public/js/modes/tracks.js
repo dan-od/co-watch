@@ -157,11 +157,14 @@ export function createTracks(ctx) {
       return;
     }
 
-    // Chrome/Firefox hide embedded tracks, so offer the other language
-    // RELEASES of this title instead — picking one reloads at the same spot.
-    const opts = ctx.stremio?.getAudioOptions?.() || [];
-    if (opts.length > 1) {
-      for (const o of opts) {
+    // Chrome/Firefox hide embedded tracks. We can still change what you HEAR by
+    // loading a release that leads with another language — but only those are
+    // offered, because swapping to a file whose primary track is still English
+    // would look like it worked and change nothing.
+    const { options = [], alsoInFile = [] } = ctx.stremio?.getAudioOptions?.() || {};
+
+    if (options.length > 1) {
+      for (const o of options) {
         const row = document.createElement('button');
         row.type = 'button';
         row.className = 'sub';
@@ -176,13 +179,6 @@ export function createTracks(ctx) {
           tag.textContent = [o.q, o.audio].filter(Boolean).join(' · ') || 'audio';
         }
         row.append(tag);
-        if (o.embedded) {
-          // No release leads with this language — it's a secondary track inside
-          // a multi-language file, which this browser can't isolate.
-          row.title = 'Only available as a secondary track inside a multi-language file — this browser can’t isolate it.';
-          tag.textContent = 'in-file';
-          tag.className = 'tag';
-        }
         row.addEventListener('click', async () => {
           if (o.current) return;
           row.disabled = true;
@@ -191,16 +187,22 @@ export function createTracks(ctx) {
         });
         audioList.append(row);
       }
-      const p = document.createElement('p');
-      p.className = 'hint';
-      p.textContent = 'This browser hides embedded tracks, so each option loads that language’s release — everyone keeps their place.';
-      audioList.append(p);
-      return;
+      hint('Each option loads that language’s release — everyone keeps their place.');
+    } else if (at && at.length === 1) {
+      hint('Only one audio track in this video.');
+    } else if (options.length === 1) {
+      hint(`Every release of this title leads with ${options[0].lang} audio.`);
+    } else {
+      hint("This browser doesn't expose embedded audio tracks (Safari does; Chrome hides them).");
     }
 
-    if (at && at.length === 1) hint('Only one audio track in this video.');
-    else if (opts.length === 1) hint(`Only one audio language available (${opts[0].lang}).`);
-    else hint("This browser doesn't expose embedded audio tracks (Safari does; Chrome hides them).");
+    // Honest footnote: tracks that exist in this exact file but can't be reached.
+    if (alsoInFile.length) {
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = `Also inside this file: ${alsoInFile.join(', ')} — your browser can’t switch to embedded tracks (Safari can).`;
+      audioList.append(p);
+    }
   }
 
   async function loadTorrentSub(f, btn) {
