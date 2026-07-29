@@ -93,9 +93,9 @@ export function createTracks(ctx) {
     const torrentBox = $('torrent-subs');
     torrentBox.replaceChildren();
     if (currentTorrentSubs) {
-      const h = document.createElement('p');
-      h.className = 'hint';
-      h.textContent = 'From this torrent:';
+      const h = document.createElement('span');
+      h.className = 'label';
+      h.textContent = 'From this torrent';
       torrentBox.append(h);
       for (const f of currentTorrentSubs.files) {
         const row = document.createElement('div');
@@ -116,9 +116,9 @@ export function createTracks(ctx) {
     const addonBox = $('addon-subs');
     addonBox.replaceChildren();
     if (currentAddonSubs) {
-      const h = document.createElement('p');
-      h.className = 'hint';
-      h.textContent = 'From the add-on:';
+      const h = document.createElement('span');
+      h.className = 'label';
+      h.textContent = 'From the add-on';
       addonBox.append(h);
       for (const sub of currentAddonSubs) {
         const row = document.createElement('div');

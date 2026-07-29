@@ -1,28 +1,40 @@
-// Shared UI: status/notice, mode tabs, the mic/cam/chat/leave cluster, the
-// grid↔theater stage layout, copy-link, and autoplay recovery. Owns the
-// current mode ('screen' | 'sync').
+// Shared UI: status/notice, mode tabs, the control-bar clusters, the
+// grid↔theater stage layout, copy-link, and autoplay recovery.
 //
-// Layout rule: the camera grid fills the stage until there's content — a live
-// share (either direction) or sync mode — then the stage flips to "theater":
-// content large, cameras shrink to a bottom strip. Pure CSS via .theater.
+// Modes (per the approved mockups): three tabs — Share / Sync / Stremio —
+// plus a fourth VIEW, 'watch', which the player takes over when something
+// loads. The tab of whichever source you came from stays lit while watching,
+// and "← Browse" in the control bar walks back to it.
+//
+// Layout rule: the camera grid fills the stage only while hanging out (Share
+// tab, nobody sharing). Everywhere else cameras shrink to the floating strip
+// the mockups show — pure CSS via .theater.
 
 import { $, tryPlay } from '../lib/dom.js';
 
+const VIEW_OF = { screen: 'view-share', sync: 'view-sync', stremio: 'view-stremio', watch: 'view-watch' };
+const TAB_OF = { screen: 'mode-screen', sync: 'mode-sync', stremio: 'mode-stremio' };
+
 export function createControls(ctx) {
-  let mode = 'screen'; // 'screen' | 'sync'
+  let mode = null; // 'screen' | 'sync' | 'stremio' | 'watch' — set by init()
+  let lastSource = 'stremio'; // which tab stays lit while watching
   let noticeTimer = null;
   let lastMicSent = null; // broadcast mic-state only on change
 
   $('copy-link').addEventListener('click', async () => {
-    await navigator.clipboard.writeText(location.href);
-    $('copy-link').textContent = 'Copied';
-    setTimeout(() => ($('copy-link').textContent = 'Copy'), 1500);
+    try {
+      await navigator.clipboard.writeText(location.href);
+      $('copy-link').textContent = 'Copied';
+      setTimeout(() => ($('copy-link').textContent = 'Copy'), 1500);
+    } catch {
+      $('room-link').select?.();
+    }
   });
 
   // ---- Status (top bar) + notice (stage overlay) ----
   const setStatus = (text, kind = '') => {
     $('status').textContent = text;
-    $('status-dot').className = kind;
+    $('status-dot').className = `dot ${kind}`;
   };
   const notice = (text, kind = '', autoHideMs = 0) => {
     clearTimeout(noticeTimer);
@@ -36,35 +48,58 @@ export function createControls(ctx) {
     if (autoHideMs) noticeTimer = setTimeout(() => ($('notice').hidden = true), autoHideMs);
   };
 
-  // ---- Stage layout: camera grid vs theater ----
+  // ---- Stage layout: hangout grid vs theater strip ----
   function updateLayout() {
-    const theater = mode === 'sync' || !$('screen-video').hidden;
+    const theater = mode !== 'screen' || !$('screen-video').hidden;
     $('stage-main').classList.toggle('theater', theater);
     ctx.immersive?.onLayoutChange(); // chrome auto-hide only applies while watching
   }
 
-  // ---- Mode toggle ----
+  // ---- Mode / view switching ----
   function setMode(m) {
+    if (!VIEW_OF[m]) return;
     if (mode === m) return;
     if (m !== 'screen' && ctx.screen.isSharing()) ctx.screen.stopScreenShare();
-    if (m !== 'sync' && ctx.syncCore.getPlayer()) {
+    // Leaving the player entirely (back to a browse/load view) pauses playback
+    // so a hidden video doesn't keep running under the UI.
+    if (mode === 'watch' && m !== 'watch' && ctx.syncCore.getPlayer()) {
       try {
         ctx.syncCore.getPlayer().pause();
       } catch {}
     }
     mode = m;
-    $('mode-screen').classList.toggle('active', m === 'screen');
-    $('mode-sync').classList.toggle('active', m === 'sync');
-    $('screen-pane').hidden = m !== 'screen';
-    $('sync-pane').hidden = m !== 'sync';
+    if (m !== 'watch') lastSource = m;
+
+    for (const [key, viewId] of Object.entries(VIEW_OF)) {
+      $(viewId).classList.toggle('active', key === m);
+    }
+    const litTab = TAB_OF[m === 'watch' ? lastSource : m] || TAB_OF.stremio;
+    for (const tabId of Object.values(TAB_OF)) {
+      $(tabId).setAttribute('aria-selected', String(tabId === litTab));
+    }
+
+    // Control-bar left slot follows the view.
     $('action-share').hidden = m !== 'screen';
     $('action-sync').hidden = m !== 'sync';
+    $('stremio-chip').hidden = m !== 'stremio';
+    $('watch-browse').hidden = m !== 'watch';
+
     updateLayout();
-    if (ctx.signaling.isPeerPresent()) setStatus(m === 'sync' ? 'Synced' : 'Connected', 'ok');
+    if (m === 'stremio') ctx.stremio.activate();
+    if (ctx.signaling.isPeerPresent()) {
+      setStatus(m === 'watch' ? 'Synced' : 'Connected', 'ok');
+    }
   }
 
   $('mode-screen').addEventListener('click', () => setMode('screen'));
   $('mode-sync').addEventListener('click', () => setMode('sync'));
+  $('mode-stremio').addEventListener('click', () => setMode('stremio'));
+  $('watch-browse').addEventListener('click', () => setMode(lastSource === 'watch' ? 'stremio' : lastSource));
+
+  // ---- Popover plumbing (mixer / CC / settings all share .pop) ----
+  for (const btn of document.querySelectorAll('.pop-close')) {
+    btn.addEventListener('click', () => ($(btn.dataset.close).hidden = true));
+  }
 
   // ---- Control cluster: mic / cam / chat / leave ----
   function getMicMuted() {
@@ -100,11 +135,16 @@ export function createControls(ctx) {
     syncToggleButtons();
   });
 
-  $('toggle-chat').addEventListener('click', () => {
-    const collapsed = $('chat-rail').classList.toggle('collapsed');
-    $('toggle-chat').classList.toggle('active', !collapsed);
-    $('toggle-chat').title = collapsed ? 'Show chat' : 'Hide chat';
-  });
+  // Chat is a slide-open rail (mockup): open on roomy screens, closed when tight.
+  const chatOpen = () => $('chat-rail').classList.contains('open');
+  function setChat(open) {
+    $('chat-rail').classList.toggle('open', open);
+    $('toggle-chat').classList.toggle('on', open);
+    $('toggle-chat').title = open ? 'Hide chat' : 'Show chat';
+  }
+  setChat(window.innerWidth >= 1100);
+  $('toggle-chat').addEventListener('click', () => setChat(!chatOpen()));
+
   $('leave').addEventListener('click', () => {
     try {
       ctx.signaling.dispose(); // stop the auto-reconnect loop + close the socket
@@ -126,6 +166,7 @@ export function createControls(ctx) {
     if (!$('screen-video').hidden) tryPlay($('screen-video'));
     const player = ctx.syncCore.getPlayer();
     if (player?.el) tryPlay(player.el);
+    $('tap-to-play').hidden = true;
   });
 
   return {
@@ -133,6 +174,9 @@ export function createControls(ctx) {
     notice,
     getMode: () => mode,
     setMode,
+    // Called once from app.js after every module is constructed — setMode
+    // reaches into ctx.stremio, so it can't run during construction.
+    init: (startMode = 'stremio') => setMode(startMode),
     updateLayout,
     getMicMuted,
     syncToggleButtons,

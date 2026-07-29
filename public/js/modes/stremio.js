@@ -1,57 +1,84 @@
-// Stremio source mode: paste an add-on URL (e.g. AIOStreams) → discover titles
-// (the add-on's own catalogs if it has any, otherwise TMDb search) → pick a
-// title. Movies jump straight to the add-on's streams; series open a grouped
-// season list (episode counts from TMDb, episodes lazy-loaded per season) and
-// each episode drills into its streams. Streams that carry a direct `url`
-// (debrid-resolved) play as-is; streams that carry an `infoHash` fall back to
-// the TorBox resolve flow. Playback is broadcast so peers re-resolve the same
-// title with THEIR own add-on (add-on URLs are debrid/IP-locked, like TorBox).
+// Stremio mode — the browse experience from the approved mockup:
 //
-// The panel body swaps between three views via a small nav stack:
-//   discovery (poster grid) → seasons (collapsible blocks) → streams (list)
-// The nav bar is the breadcrumb + Back.
+//   rail (search · All/Movies/TV · catalog · count)
+//     → poster grid
+//        → movie: stream picker drawer
+//        → series: detail (backdrop + facts | season accordion)
+//                   → episode: stream picker drawer
+//   setup card when no add-on is loaded yet.
+//
+// Streams that carry a direct `url` (debrid-resolved) play as-is; streams with
+// an `infoHash` fall back to the TorBox resolve flow. Playback is broadcast so
+// peers re-resolve the same title with THEIR own add-on, and every browse step
+// is mirrored to watchers (see modes/spectate.js).
 
 import { $, spinner } from '../lib/dom.js';
 import { getKey, resolveMagnet, infoHashToMagnet } from '../lib/torbox.js';
 
 const ADDON_KEY = 'stremio_addon_url';
+const SHARE_ACK_KEY = 'stremio_share_ack';
 const getTmdbKey = () => (localStorage.getItem('tmdb_api_key') || '').trim();
 const isSeries = (type) => type === 'series' || type === 'tv';
-const PLACEHOLDER = 'data:image/svg+xml;utf8,' +
-  encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="180"><rect width="120" height="180" fill="#1E1910"/></svg>');
+const IMG = (path, size = 'w300') => (path ? `https://image.tmdb.org/t/p/${size}${path}` : '');
+
+const SHARE_WARNING =
+  'Heads up: sharing lets everyone in the room stream through YOUR debrid ' +
+  'account — your add-on link carries its keys. It is shared only while they ' +
+  'are here and is never saved on their devices. Share your add-on so keyless ' +
+  'friends can follow?';
 
 export function createStremio(ctx) {
   const notice = (text, kind, ms) => ctx.controls.notice(text, kind, ms);
   let manifest = null;
   let catalogs = [];
-  let viewStack = []; // [{ label, render }] — top is the current view
-  // A follower who has no add-on of their own can borrow the sharer's, received
-  // over the wire (Part C). Kept in MEMORY ONLY — never written to localStorage,
-  // never shown in plain text — and gone the moment they leave (leave reloads).
-  let followAddon = null;
+  let filterType = 'all';
+  let lastQuery = '';
+  let current = null; // the title whose detail/picker is open
+  let followAddon = null; // borrowed from the host — MEMORY ONLY, never stored
 
   const getAddonUrl = () => (localStorage.getItem(ADDON_KEY) || '').trim();
   const setAddonUrl = (url) => localStorage.setItem(ADDON_KEY, (url || '').trim());
-  // Own add-on wins; otherwise fall back to a sharer's borrowed one.
   const getEffectiveAddon = () => getAddonUrl() || followAddon || '';
 
   const status = (text, kind = '') => {
-    $('stremio-status').textContent = text;
-    $('stremio-status').className = `hint ${kind}`;
+    $('stremio-status').textContent = text || '';
+    $('stremio-status').className = `hint rail-status ${kind}`;
   };
+  const setCount = (text) => ($('stremio-count').innerHTML = text || '');
+
+  // ---- panes ----
+  function showPane(which) {
+    $('stremio-panel').hidden = which !== 'browse';
+    $('stremio-detail').hidden = which !== 'detail';
+    $('stremio-setup').hidden = which !== 'setup';
+    syncBackTrap(which !== 'browse');
+  }
+
+  // Browser Back pops the detail view instead of leaving the room.
+  let backTrapped = false;
+  function syncBackTrap(deep) {
+    if (deep && !backTrapped) {
+      try {
+        history.pushState({ cowatchStremio: true }, '');
+        backTrapped = true;
+      } catch {}
+    }
+  }
+  window.addEventListener?.('popstate', () => {
+    if (!backTrapped) return;
+    backTrapped = false;
+    if (!$('picker').classList.contains('show')) {
+      if (!$('stremio-detail').hidden) showPane('browse');
+    } else {
+      closePicker();
+    }
+  });
 
   // ---- browse-cast (host side of spectate) ----
-  // Lean, public-metadata-only snapshots of what we're browsing so watchers
-  // follow along read-only (modes/spectate.js renders them). NEVER includes
-  // the add-on URL or any key — names, posters, backdrops only. Views carry
-  // their snapshot as `cast`, broadcast on every render — so Back re-casts
-  // the restored view for free.
   const castBrowse = (data) => {
     try {
       ctx.signaling.signal({ type: 'browse', data });
-    } catch {
-      // not connected yet — browsing alone is fine
-    }
+    } catch {}
   };
   const gridCast = (label, metas) => ({
     view: 'grid',
@@ -64,43 +91,7 @@ export function createStremio(ctx) {
     })),
   });
 
-  // ---- view stack / breadcrumb ----
-  // Browser-Back integration: whenever we're deeper than the root discovery
-  // view we keep ONE history entry armed (a "trap", same URL so the address bar
-  // doesn't change). The browser Back button then pops a view instead of
-  // leaving the room; popstate re-arms while still deep. Without this, Back
-  // walked straight off /r/<id> back to the landing page.
-  let backTrapped = false;
-  function syncBackTrap() {
-    if (viewStack.length > 1 && !$('stremio-panel').hidden && !backTrapped) {
-      try { history.pushState({ cowatchStremio: true }, ''); backTrapped = true; } catch { /* history unavailable */ }
-    }
-  }
-  function renderTop() {
-    const top = viewStack[viewStack.length - 1];
-    $('stremio-nav').hidden = viewStack.length <= 1;
-    $('stremio-crumb').textContent = viewStack.map((v) => v.label).join('  ›  ');
-    top?.render();
-    if (top?.cast) castBrowse(top.cast);
-    syncBackTrap();
-  }
-  function resetView(view) { viewStack = [view]; renderTop(); }
-  function pushView(view) { viewStack.push(view); renderTop(); }
-  function popView() { if (viewStack.length > 1) { viewStack.pop(); renderTop(); } }
-
-  // UI Back routes through history so both stay in sync (fires popstate → pop).
-  $('stremio-back').addEventListener('click', () => {
-    if (backTrapped) history.back();
-    else popView();
-  });
-  window.addEventListener?.('popstate', () => {
-    if (!backTrapped) return; // not our trap — let the browser navigate normally
-    backTrapped = false; // the browser just consumed our entry
-    if ($('stremio-panel').hidden) return; // browsing isn't on screen — ignore
-    popView(); // pops one level; renderTop re-arms a fresh trap if still deep
-  });
-
-  // ---- proxy calls (add-on, via the SSRF-guarded server proxy) ----
+  // ---- proxy + TMDb ----
   async function proxy(resource, params) {
     const qs = new URLSearchParams({ url: getEffectiveAddon(), ...params });
     const res = await fetch(`/api/stremio/${resource}?${qs}`);
@@ -112,7 +103,6 @@ export function createStremio(ctx) {
   const fetchCatalog = (type, id, extra) => proxy('catalog', extra ? { type, id, extra } : { type, id });
   const fetchStreams = (type, id) => proxy('stream', { type, id });
 
-  // ---- TMDb helpers (direct; key stays client-side, same as external_ids) ----
   async function tmdb(path, params = {}) {
     const key = getTmdbKey();
     if (!key) return null;
@@ -126,20 +116,17 @@ export function createStremio(ctx) {
     }
   }
 
-  // Resolve a grid item to a Stremio stream base id (imdb preferred) plus a
-  // TMDb id (needed for season/episode data).
   async function resolveIds(item) {
     const kind = isSeries(item.type) ? 'tv' : 'movie';
     let tmdbId = item.tmdbId ? String(item.tmdbId) : null;
-    let baseId = item.id || null; // catalog metas carry a Stremio id already
+    let baseId = item.id || null;
     if (!baseId && tmdbId) {
       const imdb = (await tmdb(`${kind}/${tmdbId}/external_ids`))?.imdb_id;
       baseId = imdb || `tmdb:${tmdbId}`;
     }
     if (!tmdbId && baseId) {
-      if (baseId.startsWith('tmdb:')) {
-        tmdbId = baseId.slice(5).split(':')[0];
-      } else if (/^tt\d+/.test(baseId)) {
+      if (baseId.startsWith('tmdb:')) tmdbId = baseId.slice(5).split(':')[0];
+      else if (/^tt\d+/.test(baseId)) {
         const found = await tmdb(`find/${baseId.split(':')[0]}`, { external_source: 'imdb_id' });
         const hit = kind === 'tv' ? found?.tv_results?.[0] : found?.movie_results?.[0];
         tmdbId = hit ? String(hit.id) : null;
@@ -148,33 +135,29 @@ export function createStremio(ctx) {
     return { baseId, tmdbId, kind };
   }
 
-  // ---- add-on load ----
+  // ---- add-on ----
   async function loadAddon(url) {
     setAddonUrl(url);
     manifest = null;
     catalogs = [];
-    viewStack = [];
-    $('stremio-nav').hidden = true;
-    $('stremio-results').replaceChildren();
-    const tag = $('stremio-addon');
-    tag.hidden = true;
     status('Loading add-on…');
     try {
       manifest = await fetchManifest();
       catalogs = (manifest.catalogs || []).filter((c) => c.type && c.id);
-      tag.textContent = manifest.name ? `✓ ${manifest.name}` : '✓ loaded';
-      tag.hidden = false;
+      const name = manifest.name || 'Add-on';
+      $('stremio-addon').textContent = name;
+      $('stremio-chip-name').textContent = name;
+      $('stremio-chip').hidden = ctx.controls.getMode() !== 'stremio';
       buildCatalogSelect();
+      showPane('browse');
       status(
-        catalogs.length
-          ? 'Loaded — browse a catalog, or search a title above.'
-          : 'Loaded — this add-on has no catalogs; search a title above.',
+        catalogs.length ? 'Loaded — browse a catalog, or search a title.' : 'Loaded — search a title above.',
         'ok'
       );
       if (catalogs.length) openCatalog(catalogs[0]);
     } catch (err) {
-      tag.hidden = true;
       status(`Could not load add-on: ${err.message || err}`, 'warn');
+      showPane('setup');
     }
   }
 
@@ -199,13 +182,22 @@ export function createStremio(ctx) {
     const url = $('stremio-url').value.trim();
     if (url) loadAddon(url);
   });
+  $('stremio-cancel').addEventListener('click', () => showPane('browse'));
+  $('stremio-change').addEventListener('click', () => {
+    $('stremio-url').value = getAddonUrl();
+    showPane('setup');
+  });
+  $('stremio-chip').addEventListener('click', () => {
+    $('stremio-url').value = getAddonUrl();
+    showPane('setup');
+  });
   $('stremio-catalog').addEventListener('change', () => {
     const v = $('stremio-catalog').value;
     if (v.startsWith('cat:')) openCatalog(catalogs[Number(v.slice(4))]);
     else status('Type a title above and press Search.');
   });
 
-  // ---- discovery: catalog browse ----
+  // ---- discovery ----
   async function openCatalog(cat) {
     status(`Loading “${cat.name || cat.id}”…`);
     spinner(true);
@@ -214,16 +206,14 @@ export function createStremio(ctx) {
       const metas = (data.metas || []).map((m) => ({
         name: m.name || m.title,
         poster: m.poster,
-        backdrop: m.background || '', // some add-ons ship wide art
+        backdrop: m.background || '',
         type: m.type || cat.type,
-        id: m.id, // already a Stremio id
+        id: m.id,
       }));
-      resetView({
-        label: cat.name || cat.id,
-        render: () => renderGrid(metas),
-        cast: gridCast(cat.name || cat.id, metas),
-      });
-      status(`${metas.length} title${metas.length === 1 ? '' : 's'}.`, metas.length ? 'ok' : '');
+      renderGrid(metas);
+      setCount(`<b>${metas.length}</b> titles · ${manifest?.name || 'add-on'}`);
+      status('');
+      castBrowse(gridCast(cat.name || cat.id, metas));
     } catch (err) {
       status(`Catalog failed: ${err.message || err}`, 'warn');
     } finally {
@@ -231,10 +221,11 @@ export function createStremio(ctx) {
     }
   }
 
-  // ---- discovery: TMDb search (driven by the shared sync-input) ----
   async function run(query) {
+    lastQuery = query;
     if (!getEffectiveAddon()) {
-      status('Paste a Stremio add-on URL and press Load first.', 'warn');
+      showPane('setup');
+      status('Load a Stremio add-on first.', 'warn');
       return;
     }
     if (!getTmdbKey()) {
@@ -242,30 +233,28 @@ export function createStremio(ctx) {
       ctx.settings.openSettings(true);
       return;
     }
-    $('stremio-catalog').value = 'search';
+    showPane('browse');
     status('Searching…');
     spinner(true);
     try {
-      const res = await fetch(`/api/tmdb/search?query=${encodeURIComponent(query)}`, {
-        headers: { 'x-tmdb-key': getTmdbKey() },
-      });
+      const qs = new URLSearchParams({ query, type: filterType === 'all' ? 'all' : filterType });
+      const res = await fetch(`/api/tmdb/search?${qs}`, { headers: { 'x-tmdb-key': getTmdbKey() } });
       const data = await res.json().catch(() => null);
       if (!data?.success) throw new Error(data?.detail || 'search failed');
       const metas = data.data.map((m) => ({
         name: m.title,
-        poster: m.poster_path ? `https://image.tmdb.org/t/p/w300${m.poster_path}` : '',
-        backdrop: m.backdrop_path ? `https://image.tmdb.org/t/p/w1280${m.backdrop_path}` : '',
+        poster: IMG(m.poster_path),
+        backdrop: IMG(m.backdrop_path, 'w1280'),
         overview: m.overview || '',
+        rating: m.vote_average || 0,
         type: m.type === 'tv' ? 'series' : 'movie',
         tmdbId: m.id,
         year: m.year,
       }));
-      resetView({
-        label: `“${query}”`,
-        render: () => renderGrid(metas),
-        cast: gridCast(`Searching “${query}”`, metas),
-      });
-      status(`${metas.length} result${metas.length === 1 ? '' : 's'}.`, metas.length ? 'ok' : '');
+      renderGrid(metas);
+      setCount(`<b>${metas.length}</b> results · ${manifest?.name || 'add-on'}`);
+      status('');
+      castBrowse(gridCast(`Searching “${query}”`, metas));
     } catch (err) {
       status(`Search failed: ${err.message || err}`, 'warn');
     } finally {
@@ -273,51 +262,77 @@ export function createStremio(ctx) {
     }
   }
 
-  // ---- discovery grid ----
-  function emptyMsg(container, text) {
-    const p = document.createElement('p');
-    p.className = 'hint';
-    p.textContent = text;
-    container.append(p);
-  }
+  $('stremio-search-btn').addEventListener('click', () => {
+    const q = $('stremio-search').value.trim();
+    if (q) run(q);
+  });
+  $('stremio-search').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const q = $('stremio-search').value.trim();
+    if (q) run(q);
+  });
+  $('stremio-type').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    filterType = b.dataset.type;
+    for (const x of $('stremio-type').querySelectorAll('button')) {
+      x.setAttribute('aria-pressed', String(x === b));
+    }
+    if (lastQuery) run(lastQuery);
+  });
 
-  // Netflix/Stremio-style poster wall: the whole card is the click target and
-  // the title/meta sit on a gradient over the poster's bottom edge. Uses its
-  // own .poster-card classes so the (dormant) search panel's cards are
-  // untouched.
+  // ---- poster grid ----
   function renderGrid(items) {
-    const container = $('stremio-results');
-    container.replaceChildren();
-    if (!items.length) { emptyMsg(container, 'Nothing found.'); return; }
-    const grid = document.createElement('div');
-    grid.className = 'results-grid';
+    const grid = $('stremio-results');
+    grid.replaceChildren();
+    if (!items.length) {
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = 'Nothing found.';
+      grid.append(p);
+      return;
+    }
     for (const item of items) {
-      const card = document.createElement('div');
+      const card = document.createElement('button');
+      card.type = 'button';
       card.className = 'poster-card';
       card.title = item.name || '';
-      card.setAttribute('role', 'button');
-      card.tabIndex = 0;
-      const img = document.createElement('img');
-      img.src = item.poster || PLACEHOLDER;
-      img.alt = item.name || '';
-      img.loading = 'lazy';
-      img.addEventListener('error', () => { img.src = PLACEHOLDER; }, { once: true });
-      const overlay = document.createElement('div');
-      overlay.className = 'poster-overlay';
-      const h = document.createElement('h4');
-      h.textContent = item.name || 'Untitled';
-      const meta = document.createElement('span');
-      meta.className = 'poster-meta';
-      meta.textContent = [item.year, isSeries(item.type) ? 'Series' : 'Movie'].filter(Boolean).join(' · ');
-      overlay.append(h, meta);
-      card.append(img, overlay);
+
+      const poster = document.createElement('div');
+      poster.className = 'poster';
+      if (item.poster) {
+        const img = document.createElement('img');
+        img.src = item.poster;
+        img.alt = '';
+        img.loading = 'lazy';
+        img.addEventListener('error', () => img.remove(), { once: true });
+        poster.append(img);
+      }
+      const kind = document.createElement('span');
+      kind.className = 'badge-type';
+      kind.textContent = isSeries(item.type) ? 'Series' : 'Movie';
+      const hover = document.createElement('div');
+      hover.className = 'hoverlay';
+      const hoverLabel = document.createElement('span');
+      hoverLabel.textContent = isSeries(item.type) ? 'Pick an episode' : 'Play for everyone';
+      hover.append(hoverLabel);
+      poster.append(kind, hover);
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const t = document.createElement('div');
+      t.className = 't';
+      t.textContent = item.name || 'Untitled';
+      const y = document.createElement('div');
+      y.className = 'y';
+      y.textContent = item.year || '';
+      meta.append(t, y);
+
+      card.append(poster, meta);
       card.addEventListener('click', () => selectTitle(item));
-      card.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectTitle(item); }
-      });
       grid.append(card);
     }
-    container.append(grid);
   }
 
   async function selectTitle(item) {
@@ -329,53 +344,111 @@ export function createStremio(ctx) {
         notice('Could not resolve a stream id for this title.', 'warn', 4000);
         return;
       }
-      if (isSeries(item.type)) {
-        const info = await loadSeasons(tmdbId);
-        const n = info?.seasons?.length || 0;
-        pushView({
-          label: item.name || 'Series',
-          render: () => renderSeasons(item, baseId, tmdbId, info),
-          cast: n
-            ? {
-                view: 'seasons',
-                title: {
-                  name: item.name || 'Series',
-                  poster: item.poster || '',
-                  backdrop: info.backdrop || item.backdrop || '',
-                  year: item.year || '',
-                  overview: (info.overview || item.overview || '').slice(0, 300),
-                },
-                seasons: info.seasons.map((s) => ({ number: s.number, count: s.count })),
-              }
-            : undefined,
-        });
-        status(
-          n
-            ? `${n} season${n === 1 ? '' : 's'} — expand one to pick an episode.`
-            : 'No season data (add a TMDb key) — enter a season/episode below.',
-          n ? 'ok' : ''
-        );
-      } else {
-        await openStreams('movie', baseId, item.name, { backdrop: item.backdrop, overview: item.overview });
-      }
+      current = { ...item, baseId, tmdbId };
+      status('');
+      if (isSeries(item.type)) await openDetail(current);
+      else await openPicker('movie', baseId, item.name, { kicker: 'Movie', art: item });
     } finally {
       spinner(false);
     }
   }
 
-  // ---- series: seasons (TMDb) ----
-  // Returns { seasons, backdrop, overview } — the tv-details call we already
-  // make carries the wide art + synopsis the cinematic hero needs.
+  // ---- series detail ----
+  async function openDetail(item) {
+    showPane('detail');
+    $('detail-kind').textContent = 'Series';
+    $('detail-title').textContent = item.name || 'Series';
+    $('detail-overview').textContent = item.overview || '';
+    $('detail-backdrop').style.backgroundImage = item.backdrop ? `url("${item.backdrop.replace(/"/g, '%22')}")` : '';
+    $('detail-poster').replaceChildren();
+    if (item.poster) {
+      const img = document.createElement('img');
+      img.src = item.poster;
+      img.alt = '';
+      $('detail-poster').append(img);
+    }
+    $('stremio-seasons').replaceChildren();
+    $('detail-facts').replaceChildren();
+    $('detail-season-count').textContent = '';
+
+    const info = await loadSeasons(item.tmdbId);
+    const seasons = info?.seasons || [];
+    if (info?.overview) $('detail-overview').textContent = info.overview;
+    if (info?.backdrop) $('detail-backdrop').style.backgroundImage = `url("${info.backdrop.replace(/"/g, '%22')}")`;
+
+    const totalEps = seasons.reduce((n, s) => n + (s.count || 0), 0);
+    const facts = [
+      info?.years || item.year || '',
+      seasons.length ? `${seasons.length} season${seasons.length === 1 ? '' : 's'} · ${totalEps} episodes` : '',
+      info?.runtime ? `${info.runtime} min` : '',
+    ].filter(Boolean);
+    renderFacts(facts, info?.rating ?? item.rating);
+    $('detail-season-count').textContent = seasons.length ? `${seasons.length} seasons` : '';
+
+    if (!seasons.length) {
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.style.padding = '14px 16px';
+      p.textContent = 'No season data — add a TMDb key under the gear to list episodes.';
+      $('stremio-seasons').append(p);
+      return;
+    }
+    const art = { backdrop: info?.backdrop || item.backdrop || '', poster: item.poster };
+    // Open the first REAL season, not Specials (season 0 is often a huge dump
+    // of featurettes, and it's never what you came to watch).
+    const firstReal = seasons.findIndex((s) => s.number > 0);
+    const openIdx = firstReal === -1 ? 0 : firstReal;
+    seasons.forEach((s, i) => $('stremio-seasons').append(buildSeasonBlock(item, s, art, i === openIdx)));
+
+    castBrowse({
+      view: 'seasons',
+      title: {
+        name: item.name || 'Series',
+        poster: item.poster || '',
+        backdrop: art.backdrop,
+        year: item.year || '',
+        overview: (info?.overview || item.overview || '').slice(0, 300),
+      },
+      seasons: seasons.map((s) => ({ number: s.number, count: s.count })),
+    });
+  }
+
+  function renderFacts(bits, rating) {
+    const box = $('detail-facts');
+    box.replaceChildren();
+    bits.forEach((b, i) => {
+      if (i) box.append(Object.assign(document.createElement('i'), { className: 'sep' }));
+      box.append(Object.assign(document.createElement('span'), { textContent: b }));
+    });
+    if (rating) {
+      if (bits.length) box.append(Object.assign(document.createElement('i'), { className: 'sep' }));
+      const r = document.createElement('span');
+      r.className = 'rating';
+      r.textContent = `★ ${Number(rating).toFixed(1)}`;
+      box.append(r);
+    }
+  }
+
+  $('stremio-back').addEventListener('click', () => {
+    if (backTrapped) history.back();
+    else showPane('browse');
+  });
+
   async function loadSeasons(tmdbId) {
     if (!tmdbId) return null;
     const tv = await tmdb(`tv/${tmdbId}`);
     if (!tv?.seasons) return null;
+    const first = (tv.first_air_date || '').split('-')[0];
+    const last = (tv.last_air_date || '').split('-')[0];
     return {
       seasons: tv.seasons
         .filter((s) => (s.episode_count || 0) > 0)
         .map((s) => ({ number: s.season_number, count: s.episode_count, name: s.name, overview: s.overview })),
-      backdrop: tv.backdrop_path ? `https://image.tmdb.org/t/p/w1280${tv.backdrop_path}` : '',
+      backdrop: IMG(tv.backdrop_path, 'w1280'),
       overview: tv.overview || '',
+      rating: tv.vote_average || 0,
+      runtime: Array.isArray(tv.episode_run_time) ? tv.episode_run_time[0] : 0,
+      years: first ? (last && last !== first ? `${first}–${last}` : first) : '',
     };
   }
 
@@ -387,113 +460,50 @@ export function createStremio(ctx) {
         name: e.name,
         air: e.air_date,
         overview: e.overview,
-        still: e.still_path, // 16:9 episode thumbnail
-        runtime: e.runtime, // minutes
+        still: e.still_path,
+        runtime: e.runtime,
       }));
     }
     return Array.from({ length: count }, (_, i) => ({ number: i + 1, name: '' }));
   }
 
-  // Netflix-style title header: full-width backdrop with a dark gradient,
-  // poster floating left, big title, meta chips, and a clamped synopsis.
-  // Used above the season list AND (slimmer) above a title's stream list.
-  function buildTitleHero(opts) {
-    const { name, poster, backdrop, metaText, overview, slim } = opts;
-    const hero = document.createElement('div');
-    hero.className = `title-hero${slim ? ' slim' : ''}`;
-    if (backdrop) hero.style.backgroundImage = `url("${backdrop.replace(/"/g, '%22')}")`;
-    const scrim = document.createElement('div');
-    scrim.className = 'hero-scrim';
-    const inner = document.createElement('div');
-    inner.className = 'hero-inner';
-    if (poster) {
-      const img = document.createElement('img');
-      img.className = 'hero-poster';
-      img.src = poster;
-      img.alt = '';
-      img.addEventListener('error', () => img.remove(), { once: true });
-      inner.append(img);
-    }
-    const body = document.createElement('div');
-    body.className = 'hero-body';
-    const h = document.createElement('h2');
-    h.textContent = name || 'Untitled';
-    body.append(h);
-    if (metaText) {
-      const meta = document.createElement('span');
-      meta.className = 'hero-meta';
-      meta.textContent = metaText;
-      body.append(meta);
-    }
-    if (overview && !slim) {
-      const ov = document.createElement('p');
-      ov.className = 'hero-overview';
-      ov.textContent = overview;
-      ov.title = overview;
-      body.append(ov);
-    }
-    inner.append(body);
-    hero.append(scrim, inner);
-    return hero;
-  }
-
-  function renderSeasons(item, baseId, tmdbId, info) {
-    const container = $('stremio-results');
-    container.replaceChildren();
-    const seasons = info?.seasons;
-    if (!seasons || !seasons.length) { renderManualSE(container, item.name, baseId); return; }
-    const art = { backdrop: info.backdrop || item.backdrop || '', poster: item.poster };
-    container.append(
-      buildTitleHero({
-        name: item.name,
-        poster: item.poster,
-        backdrop: art.backdrop,
-        metaText: [item.year, `${seasons.length} season${seasons.length === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
-        overview: info.overview || item.overview,
-      })
-    );
-    for (const s of seasons) container.append(buildSeasonBlock(item.name, baseId, tmdbId, s, art));
-  }
-
-  function buildSeasonBlock(name, baseId, tmdbId, s, art) {
+  function buildSeasonBlock(item, s, art, openFirst) {
     const block = document.createElement('div');
-    block.className = 'season-block';
-    const header = document.createElement('div');
-    header.className = 'season-header';
-    if (s.overview) header.title = s.overview;
-    const title = document.createElement('span');
-    title.className = 'season-title';
-    title.textContent = s.number === 0 ? 'Specials' : `Season ${s.number}`;
-    const count = document.createElement('span');
-    count.className = 'season-count';
-    count.textContent = `${s.count} episode${s.count === 1 ? '' : 's'}`;
-    const toggle = document.createElement('button');
-    toggle.className = 'season-toggle ghost';
-    toggle.textContent = '▸';
-    header.append(title, count, toggle);
+    block.className = `season${openFirst ? ' open' : ''}`;
 
-    const epList = document.createElement('div');
-    epList.className = 'episode-list';
-    epList.hidden = true;
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'season-head';
+    head.innerHTML =
+      '<svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>';
+    const n = document.createElement('span');
+    n.className = 'n';
+    n.textContent = s.number === 0 ? 'Specials' : `Season ${s.number}`;
+    const c = document.createElement('span');
+    c.className = 'c';
+    c.textContent = `${s.count} episode${s.count === 1 ? '' : 's'}`;
+    head.append(n, c);
+
+    const eps = document.createElement('div');
+    eps.className = 'eps';
     let loaded = false;
 
-    const open = async () => {
-      epList.hidden = !epList.hidden;
-      toggle.textContent = epList.hidden ? '▸' : '▾';
-      if (epList.hidden || loaded) return;
+    const fill = async () => {
+      if (loaded) return;
       loaded = true;
-      const loading = document.createElement('p');
-      loading.className = 'hint';
-      loading.textContent = 'Loading episodes…';
-      epList.append(loading);
-      const eps = await loadEpisodes(tmdbId, s.number, s.count);
-      epList.replaceChildren();
-      for (const ep of eps) epList.append(buildEpisodeRow(name, baseId, s.number, ep, art));
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.style.padding = '8px';
+      p.textContent = 'Loading episodes…';
+      eps.append(p);
+      const list = await loadEpisodes(item.tmdbId, s.number, s.count);
+      eps.replaceChildren();
+      for (const ep of list) eps.append(buildEpisodeRow(item, s.number, ep, art));
       castBrowse({
         view: 'episodes',
-        title: { name, backdrop: art?.backdrop || '' },
+        title: { name: item.name, backdrop: art.backdrop || '' },
         season: s.number,
-        episodes: eps.slice(0, 40).map((e) => ({
+        episodes: list.slice(0, 40).map((e) => ({
           number: e.number,
           name: e.name || '',
           air: e.air || '',
@@ -503,365 +513,321 @@ export function createStremio(ctx) {
         })),
       });
     };
-    header.addEventListener('click', (e) => { if (e.target !== toggle) open(); });
-    toggle.addEventListener('click', open);
 
-    block.append(header, epList);
+    head.addEventListener('click', () => {
+      const open = block.classList.toggle('open');
+      if (open) fill();
+    });
+    if (openFirst) fill();
+
+    block.append(head, eps);
     return block;
   }
 
-  function buildEpisodeRow(showName, baseId, season, ep, art) {
-    // TMDb air_date is YYYY-MM-DD; a future date means "not out yet" → the row
-    // renders locked (dim, no Streams) with the air date, like a coming-soon slot.
+  function buildEpisodeRow(item, season, ep, art) {
     const future = !!ep.air && ep.air > new Date().toISOString().slice(0, 10);
-
     const row = document.createElement('div');
-    row.className = `torrent-item episode-row${future ? ' episode-locked' : ''}`;
-    const head = document.createElement('div');
-    head.className = 'torrent-row-head';
+    row.className = `ep${future ? ' locked' : ''}`;
 
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
     if (ep.still) {
-      const thumb = document.createElement('img');
-      thumb.className = 'episode-thumb';
-      thumb.src = `https://image.tmdb.org/t/p/w185${ep.still}`;
-      thumb.alt = '';
-      thumb.loading = 'lazy';
-      thumb.addEventListener('error', () => thumb.remove(), { once: true });
-      head.append(thumb);
+      const img = document.createElement('img');
+      img.src = IMG(ep.still, 'w185');
+      img.alt = '';
+      img.loading = 'lazy';
+      img.addEventListener('error', () => { img.remove(); thumb.textContent = `${season}·${ep.number}`; }, { once: true });
+      thumb.append(img);
+    } else {
+      thumb.textContent = `${season}·${ep.number}`;
     }
 
-    const info = document.createElement('div');
-    info.className = 'torrent-info';
-    const nm = document.createElement('span');
-    nm.className = 'torrent-name';
-    nm.textContent = `E${ep.number}${ep.name ? ` · ${ep.name}` : ''}`;
-    nm.title = nm.textContent;
-    info.append(nm);
-    if (ep.overview) {
-      const ov = document.createElement('span');
-      ov.className = 'episode-overview';
-      ov.textContent = ep.overview;
-      ov.title = ep.overview;
-      info.append(ov);
-    }
-    const metaBits = [future ? `Airs ${ep.air}` : ep.air, ep.runtime ? `${ep.runtime} min` : '']
-      .filter(Boolean).join(' · ');
-    if (metaBits) {
-      const meta = document.createElement('span');
-      meta.className = 'torrent-meta';
-      meta.textContent = metaBits;
-      info.append(meta);
-    }
+    const meta = document.createElement('div');
+    meta.className = 'ep-meta';
+    const t = document.createElement('div');
+    t.className = 't';
+    t.textContent = `${ep.number}. ${ep.name || `Episode ${ep.number}`}`;
+    t.title = t.textContent;
+    const d = document.createElement('div');
+    d.className = 'd';
+    d.textContent = [future ? `Airs ${ep.air}` : ep.air, ep.runtime ? `${ep.runtime} min` : ''].filter(Boolean).join(' · ');
+    meta.append(t, d);
 
-    const actions = document.createElement('div');
-    actions.className = 'torrent-actions';
     const btn = document.createElement('button');
-    btn.className = 'primary';
+    btn.type = 'button';
+    btn.className = 'streams-btn';
     btn.textContent = future ? 'Not out' : 'Streams';
     btn.disabled = future;
     if (!future) {
       btn.addEventListener('click', () =>
-        openStreams('series', `${baseId}:${season}:${ep.number}`, `${showName} · S${season}E${ep.number}`, art)
+        openPicker('series', `${item.baseId}:${season}:${ep.number}`, item.name, {
+          kicker: `S${season} · E${ep.number}`,
+          episodeTitle: ep.name,
+          art,
+        })
       );
     }
-    actions.append(btn);
-    head.append(info, actions);
-    row.append(head);
+
+    row.append(thumb, meta, btn);
     return row;
   }
 
-  // Fallback when TMDb season data is unavailable: a compact manual S/E form.
-  function renderManualSE(container, name, baseId) {
-    const wrap = document.createElement('div');
-    wrap.className = 'manual-se';
-    const label = document.createElement('span');
-    label.className = 'hint';
-    label.textContent = `${name}: enter a season & episode`;
-    const sInput = document.createElement('input');
-    sInput.type = 'number'; sInput.min = '0'; sInput.value = '1'; sInput.className = 'se-num'; sInput.setAttribute('aria-label', 'Season');
-    const eInput = document.createElement('input');
-    eInput.type = 'number'; eInput.min = '1'; eInput.value = '1'; eInput.className = 'se-num'; eInput.setAttribute('aria-label', 'Episode');
-    const go = document.createElement('button');
-    go.className = 'primary';
-    go.textContent = 'Get streams';
-    go.addEventListener('click', () => {
-      const s = Math.max(0, Number(sInput.value) || 1);
-      const e = Math.max(0, Number(eInput.value) || 1);
-      openStreams('series', `${baseId}:${s}:${e}`, `${name} · S${s}E${e}`);
-    });
-    wrap.append(label, labelled('S', sInput), labelled('E', eInput), go);
-    container.append(wrap);
-  }
-  function labelled(text, input) {
-    const l = document.createElement('label');
-    l.className = 'se-field';
-    l.append(document.createTextNode(text), input);
-    return l;
-  }
+  // ---- stream picker (drawer) ----
+  let pickerMeta = null;
 
-  // ---- streams ----
-  async function openStreams(type, id, title, art) {
-    status(`Fetching streams for ${title}…`);
+  async function openPicker(type, id, title, opts = {}) {
+    pickerMeta = { type, id, title: opts.episodeTitle ? `${title} · ${opts.episodeTitle}` : title, art: opts.art };
+    $('picker-kicker').textContent = opts.kicker || 'Streams';
+    $('picker-title').textContent = opts.episodeTitle || title;
+    $('picker-sub').textContent = 'Fetching streams…';
+    $('picker-list').replaceChildren();
+    $('picker').classList.add('show');
+    $('scrim').classList.add('show');
+    syncBackTrap(true);
     spinner(true);
     try {
       const data = await fetchStreams(type, id);
       const streams = data.streams || [];
-      // Pre-sort by audio compatibility (renderStreams' internal stable sort of
-      // an already-ordered list is a no-op) so the watcher cast matches what
-      // the host actually sees.
       const ranked = streams
         .map((s, i) => ({ s, i, r: audioRank(s) }))
         .sort((a, b) => a.r - b.r || a.i - b.i)
         .map((x) => x.s);
-      pushView({
-        label: title,
-        render: () => renderStreams(ranked, { type, id, title, art }),
-        cast: {
-          view: 'streams',
-          title,
-          backdrop: art?.backdrop || '',
-          streams: ranked.slice(0, 30).map((s) => ({
-            name: cleanName(s.name || s.title || 'Stream'),
-            desc: descLine(s),
-            tags: parseTags(s),
-            warn: audioRank(s) === 2,
-          })),
-        },
+      renderPicker(ranked);
+      $('picker-sub').textContent = `${ranked.length} stream${ranked.length === 1 ? '' : 's'} · sorted by browser compatibility`;
+      castBrowse({
+        view: 'streams',
+        title: pickerMeta.title,
+        backdrop: opts.art?.backdrop || '',
+        streams: ranked.slice(0, 30).map((s) => {
+          const f = streamFacts(s);
+          return {
+            name: f.src,
+            desc: [f.size, f.audio, f.peers ? `${f.peers} peers` : ''].filter(Boolean).join(' · '),
+            tags: f.q ? [{ label: f.q, cls: 'res' }] : [],
+            warn: f.warn,
+          };
+        }),
       });
-      status(`${streams.length} stream${streams.length === 1 ? '' : 's'}.`, streams.length ? 'ok' : '');
     } catch (err) {
-      status(`Streams failed: ${err.message || err}`, 'warn');
+      $('picker-sub').textContent = 'Could not load streams.';
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.style.padding = '10px';
+      p.textContent = String(err.message || err);
+      $('picker-list').append(p);
     } finally {
       spinner(false);
     }
   }
 
-  function renderStreams(streams, meta) {
-    const container = $('stremio-results');
-    container.replaceChildren();
-    if (meta.art?.backdrop) {
-      container.append(
-        buildTitleHero({ name: meta.title, backdrop: meta.art.backdrop, slim: true })
-      );
+  function closePicker() {
+    $('picker').classList.remove('show');
+    $('scrim').classList.remove('show');
+  }
+  $('picker-close').addEventListener('click', closePicker);
+  $('scrim').addEventListener('click', closePicker);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closePicker();
+  });
+
+  function renderPicker(streams) {
+    const list = $('picker-list');
+    list.replaceChildren();
+    if (!streams.length) {
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.style.padding = '10px';
+      p.textContent = 'No streams available for this title.';
+      list.append(p);
+      return;
     }
-    if (!streams.length) { emptyMsg(container, 'No streams available for this title.'); return; }
-    // Prefer audio THIS browser can actually decode: float playable streams up,
-    // sink the silent ones. Stable sort keeps the add-on's quality order within
-    // each tier.
-    const ranked = streams.map((s, i) => ({ s, i, r: audioRank(s) }));
-    ranked.sort((a, b) => a.r - b.r || a.i - b.i);
-    const risky = ranked.filter((x) => x.r === 2).length;
-    const playable = ranked.filter((x) => x.r === 0).length; // confirmed sound HERE
-    if (!playable) {
-      // Not one stream is confirmed browser-playable. For debrid movie files
-      // that's the norm — they're Dolby/DTS, and the unlabeled ones almost
-      // always are too. Say so prominently rather than leave a silent surprise.
+    const ok = streams.filter((s) => audioRank(s) !== 2);
+    const bad = streams.filter((s) => audioRank(s) === 2);
+
+    if (!ok.length) {
       const banner = document.createElement('div');
       banner.className = 'audio-banner';
       banner.textContent = browserPlaysDolby()
-        ? 'Heads-up: none of these are confirmed to have browser-playable audio — most are DTS/lossless, so expect many to play silently.'
-        : 'Heads-up: none of these have confirmed sound in this browser — the files use Dolby/DTS audio that Chrome & Firefox can’t decode (the picture plays, but silent). Dolby (DD / DD+) streams DO play in Microsoft Edge or Safari — open the room there for sound.';
-      container.append(banner);
-    } else if (risky) {
-      const tip = document.createElement('div');
-      tip.className = 'hint';
-      tip.textContent = `${risky} stream${risky === 1 ? '' : 's'} won’t have sound in this browser (Dolby/DTS audio) — marked ⚠ and sorted last.`;
-      container.append(tip);
+        ? 'None of these are confirmed to have browser-playable audio — most are DTS/lossless, so expect many to play silently.'
+        : 'None of these have confirmed sound in this browser — the files use Dolby/DTS audio Chrome & Firefox can’t decode (the picture plays, but silent). Dolby (DD / DD+) streams DO play in Microsoft Edge or Safari.';
+      list.append(banner);
     }
-    const list = document.createElement('div');
-    list.className = 'torrent-list';
-    for (const { s } of ranked) list.append(buildStreamRow(s, meta));
-    container.append(list);
+    for (const s of ok) list.append(buildStreamRow(s));
+    if (bad.length) {
+      const label = document.createElement('div');
+      label.className = 'group-label';
+      const span = document.createElement('span');
+      span.className = 'label';
+      span.textContent = "Won't play in browser";
+      label.append(span);
+      list.append(label);
+      for (const s of bad) list.append(buildStreamRow(s));
+    }
   }
 
-  function buildStreamRow(stream, meta) {
-    const row = document.createElement('div');
-    row.className = 'torrent-item stream-row';
-    const head = document.createElement('div');
-    head.className = 'torrent-row-head';
-    const info = document.createElement('div');
-    info.className = 'torrent-info';
+  function buildStreamRow(stream) {
+    const f = streamFacts(stream);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `stream${f.warn ? ' warned' : ''}`;
 
-    const nm = document.createElement('span');
-    nm.className = 'torrent-name';
-    nm.textContent = cleanName(stream.name || stream.title || 'Stream');
-    nm.title = nm.textContent;
-    info.append(nm);
+    const q = document.createElement('span');
+    q.className = 'q';
+    q.textContent = f.q || '—';
 
-    const tags = parseTags(stream);
-    if (audioRank(stream) === 2) tags.unshift({ label: '⚠ no sound here', cls: 'warn' });
-    if (tags.length) {
-      const badges = document.createElement('div');
-      badges.className = 'badges';
-      for (const t of tags) {
-        const b = document.createElement('span');
-        b.className = `badge badge-${t.cls}`;
-        b.textContent = t.label;
-        if (t.cls === 'warn') b.title = 'This browser can’t decode this stream’s audio (Dolby/DTS) — the video will play silently. Dolby streams work in Edge/Safari; DTS needs a desktop player.';
-        badges.append(b);
+    const meta = document.createElement('span');
+    meta.className = 's-meta';
+    const src = document.createElement('span');
+    src.className = 'src';
+    src.textContent = f.src;
+    src.title = f.src;
+    const rowLine = document.createElement('span');
+    rowLine.className = 'row';
+    const add = (text, cls) => {
+      if (!text) return;
+      const el = document.createElement('span');
+      if (cls) el.className = cls;
+      el.textContent = text;
+      rowLine.append(el);
+    };
+    add(f.size);
+    if (f.audio) {
+      const a = document.createElement('span');
+      a.textContent = f.audio;
+      if (f.warn) {
+        const w = document.createElement('span');
+        w.className = 'warn';
+        w.textContent = ' ⚠ no browser audio';
+        a.append(w);
       }
-      info.append(badges);
+      rowLine.append(a);
     }
+    add(f.peers ? `${f.peers} peers` : '');
+    if (f.cached) add('cached', 'tag cached');
+    meta.append(src, rowLine);
 
-    const detail = descLine(stream);
-    if (detail) {
-      const d = document.createElement('span');
-      d.className = 'torrent-meta';
-      d.textContent = detail;
-      d.title = detail;
-      info.append(d);
-    }
+    const play = document.createElement('span');
+    play.className = 'play';
+    play.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 
-    const actions = document.createElement('div');
-    actions.className = 'torrent-actions';
-    const btn = document.createElement('button');
-    btn.className = 'primary';
-    btn.textContent = 'Play';
-    btn.addEventListener('click', () => play(stream, meta, btn));
-    actions.append(btn);
-
-    head.append(info, actions);
-    row.append(head);
+    row.append(q, meta, play);
+    row.addEventListener('click', () => play_(stream, row));
     return row;
   }
 
-  // Collapse whitespace in an add-on's stream name (keeps its emoji flair).
-  function cleanName(s) {
-    return String(s).replace(/\s+/g, ' ').trim();
+  // ---- stream metadata ----
+  const streamText = (s) => `${s.name || ''} ${s.description || s.title || ''}`;
+  function streamFacts(stream) {
+    const text = streamText(stream);
+    const res = text.match(/\b(2160p|4k|1080p|720p|480p)\b/i);
+    const size = text.match(/(\d+(?:\.\d+)?)\s?(gb|mb)\b/i);
+    const peers = text.match(/👤\s?(\d+)/);
+    let audio = '';
+    if (/\batmos\b/i.test(text)) audio = 'Atmos';
+    else if (/\btrue-?hd\b/i.test(text)) audio = 'TrueHD';
+    else if (/\bdts-?x\b/i.test(text)) audio = 'DTS:X';
+    else if (/\bdts(-hd)?(\s?ma)?\b/i.test(text)) audio = 'DTS-HD';
+    else if (/\be-?ac-?3\b|\beac3\b|\bdd\s?\+|\bddp\b/i.test(text)) audio = 'DD+';
+    else if (/\bac-?3\b|\bdd\b|dolby\s?digital/i.test(text)) audio = 'DD';
+    else if (/\baac\b/i.test(text)) audio = 'AAC';
+    return {
+      q: res ? (/4k/i.test(res[1]) ? '4K' : res[1].toLowerCase()) : '',
+      size: size ? `${size[1]} ${size[2].toUpperCase()}` : '',
+      audio,
+      peers: peers ? peers[1] : '',
+      cached: !!stream.url, // debrid-resolved direct links start instantly
+      warn: audioRank(stream) === 2,
+      src: (stream.description || stream.title || stream.name || 'Stream')
+        .split('\n')[0]
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 90),
+    };
   }
-  // Flatten the description (add-ons pack size/codec/audio across lines).
-  function descLine(stream) {
-    const raw = stream.description || stream.title || '';
-    return String(raw).split('\n').map((l) => l.trim()).filter(Boolean).join(' · ').slice(0, 110);
-  }
-  const streamText = (stream) => `${stream.name || ''} ${stream.description || stream.title || ''}`;
 
-  // What audio codecs can THIS browser actually decode in a <video>? We ask the
-  // browser instead of guessing: Dolby (AC-3/E-AC-3) ships in Edge & Safari but
-  // NOT Chrome/Firefox (licensing); DTS/TrueHD ship in ~nothing; AAC everywhere.
-  // Debrid movie files are almost all Dolby/DTS, so on Chrome they play the
-  // picture with NO SOUND — the real cause behind "audio isn't coming through".
+  // What audio can THIS browser decode? Dolby (AC-3/E-AC-3) ships in Edge &
+  // Safari but not Chrome/Firefox; DTS/TrueHD ship nowhere. Debrid files are
+  // almost all Dolby/DTS, which is why "no sound" is the norm on Chrome.
   let _audioSupport = null;
   function audioSupport() {
     if (_audioSupport) return _audioSupport;
     let v;
-    try { v = document.createElement('video'); } catch { v = null; }
+    try {
+      v = document.createElement('video');
+    } catch {
+      v = null;
+    }
     const can = (codec) => {
       if (!v?.canPlayType) return false;
       const r = v.canPlayType(`audio/mp4; codecs="${codec}"`);
       return r === 'probably' || r === 'maybe';
     };
-    _audioSupport = {
-      aac: can('mp4a.40.2') || can('mp4a.40.5') || true, // AAC is universal
-      ac3: can('ac-3'),
-      eac3: can('ec-3'),
-      // DTS/TrueHD have no positive canPlayType anywhere → always false.
-    };
+    _audioSupport = { ac3: can('ac-3'), eac3: can('ec-3') };
     return _audioSupport;
   }
   const browserPlaysDolby = () => audioSupport().ac3 || audioSupport().eac3;
 
-  // Playback rank for THIS browser: 0 = has sound here, 2 = silent here
-  // (codec this browser can't decode), 1 = unknown (no codec advertised).
   function audioRank(stream) {
     const text = streamText(stream);
     const sup = audioSupport();
-    if (/\bdts(-hd)?(\s?ma)?\b|\bdts-?x\b|\btrue-?hd\b|\batmos\b/i.test(text)) return 2; // ~no browser
+    if (/\bdts(-hd)?(\s?ma)?\b|\bdts-?x\b|\btrue-?hd\b|\batmos\b/i.test(text)) return 2;
     if (/\baac\b|\bopus\b|\bmp3\b|\bvorbis\b|\bflac\b/i.test(text)) return 0;
-    if (/\be-?ac-?3\b|\beac3\b|\bdd\s?\+|\bddp\b/i.test(text)) return sup.eac3 ? 0 : 2; // Dolby Digital Plus
-    if (/\bac-?3\b|\bdd\b|dolby\s?digital/i.test(text)) return sup.ac3 ? 0 : 2; // Dolby Digital
-    return 1; // unadvertised — could be anything
-  }
-
-  // Best-effort quality badges parsed from name + description.
-  function parseTags(stream) {
-    const text = streamText(stream);
-    const tags = [];
-    const seen = new Set();
-    const add = (label, cls) => { if (!seen.has(label)) { seen.add(label); tags.push({ label, cls }); } };
-    const res = text.match(/\b(2160p|4k|1080p|720p|480p)\b/i);
-    if (res) add(/4k/i.test(res[1]) ? '4K' : res[1].toLowerCase(), 'res');
-    if (/\bdolby\s?vision\b|\bdovi\b|\bdv\b/i.test(text)) add('DV', 'hdr');
-    if (/\bhdr10\+?\b|\bhdr\b/i.test(text)) add('HDR', 'hdr');
-    const size = text.match(/(\d+(?:\.\d+)?)\s?(gb|mb)\b/i);
-    if (size) add(`${size[1]} ${size[2].toUpperCase()}`, 'size');
-    if (/\bremux\b/i.test(text)) add('REMUX', 'src');
-    else if (/\bblu-?ray\b|\bbdrip\b/i.test(text)) add('BluRay', 'src');
-    else if (/\bweb-?dl\b|\bwebrip\b|\bweb\b/i.test(text)) add('WEB', 'src');
-    if (/\batmos\b/i.test(text)) add('Atmos', 'aud');
-    else if (/\btrue-?hd\b/i.test(text)) add('TrueHD', 'aud');
-    else if (/\bdts(-hd)?(\s?ma)?\b|\bdts-?x\b/i.test(text)) add('DTS', 'aud');
-    else if (/\be-?ac-?3\b|\beac3\b|\bdd\s?\+|\bddp\b/i.test(text)) add('DD+', 'aud');
-    else if (/\bac-?3\b|\bdd\b|dolby\s?digital/i.test(text)) add('DD', 'aud');
-    else if (/\baac\b/i.test(text)) add('AAC', 'aud');
-    if (/\bhevc\b|\bx265\b|\bh\.?265\b/i.test(text)) add('HEVC', 'codec');
-    else if (/\bav1\b/i.test(text)) add('AV1', 'codec');
-    const seeders = text.match(/👤\s?(\d+)/);
-    if (seeders) add(`${seeders[1]} seeders`, 'seed');
-    return tags.slice(0, 6);
-  }
-
-  const SHARE_ACK_KEY = 'stremio_share_ack';
-  const SHARE_WARNING =
-    'Heads up: sharing lets everyone in the room stream through YOUR debrid ' +
-    'account — your add-on link carries its keys. It is shared only while they ' +
-    'are here and is never saved on their devices. Share your add-on so keyless ' +
-    'friends can follow?';
-
-  // The add-on URL to attach to a broadcast (or '' to withhold it). We only have
-  // one to share if it's OUR own; and we ask for consent once. If we can't ask
-  // (no confirm) or the user declines, we withhold it — playback still works,
-  // watchers just need their own add-on. Declining leaves the flag unset, so
-  // we ask again next time.
-  function addonToShare() {
-    const own = getAddonUrl();
-    if (!own) return ''; // a follower has nothing of their own to re-share
-    if (localStorage.getItem(SHARE_ACK_KEY)) return own;
-    const ok = typeof window.confirm === 'function' && window.confirm(SHARE_WARNING);
-    if (ok) { localStorage.setItem(SHARE_ACK_KEY, '1'); return own; }
-    return '';
+    if (/\be-?ac-?3\b|\beac3\b|\bdd\s?\+|\bddp\b/i.test(text)) return sup.eac3 ? 0 : 2;
+    if (/\bac-?3\b|\bdd\b|dolby\s?digital/i.test(text)) return sup.ac3 ? 0 : 2;
+    return 1;
   }
 
   // ---- playback ----
-  async function play(stream, meta, btn) {
-    btn.disabled = true;
-    btn.textContent = 'Loading…';
+  function addonToShare() {
+    const own = getAddonUrl();
+    if (!own) return '';
+    if (localStorage.getItem(SHARE_ACK_KEY)) return own;
+    const ok = typeof window.confirm === 'function' && window.confirm(SHARE_WARNING);
+    if (ok) {
+      localStorage.setItem(SHARE_ACK_KEY, '1');
+      return own;
+    }
+    return '';
+  }
+
+  async function play_(stream, row) {
+    row.disabled = true;
+    const q = row.querySelector('.q');
+    const was = q ? q.textContent : '';
+    if (q) q.textContent = '…';
     try {
-      const { url, torrentMeta } = await resolveStream(stream, (p) => (btn.textContent = `Downloading ${Math.round(p * 100)}%`));
+      const { url, torrentMeta } = await resolveStream(stream, (p) => {
+        if (q) q.textContent = `${Math.round(p * 100)}%`;
+      });
       if (!url) {
         notice('This stream has no playable source.', 'warn', 4000);
-        btn.disabled = false;
-        btn.textContent = 'Play';
         return;
       }
       const source = {
         kind: 'stremio',
-        type: meta.type,
-        streamId: meta.id,
+        type: pickerMeta.type,
+        streamId: pickerMeta.id,
         name: stream.name || stream.title || '',
-        title: meta.title,
+        title: pickerMeta.title,
         resolvedUrl: url,
       };
-      // Part C: let keyless friends follow on OUR add-on — but only after a
-      // one-time, eyes-open consent (the add-on URL embeds our debrid keys).
       const shareAddon = addonToShare();
       if (shareAddon) source.addonUrl = shareAddon;
       rememberMeta(source);
-      await ctx.syncCore.loadSource(source);
-      applySubs(stream, meta, torrentMeta); // torrent + add-on subtitles → CC panel
-      castBrowse({ view: 'none' }); // browsing is over — watchers' spectate closes
+      closePicker();
+      await ctx.syncCore.loadSource(source); // switches to the watch view
+      applySubs(stream, { type: pickerMeta.type, id: pickerMeta.id }, torrentMeta);
+      castBrowse({ view: 'none' });
       ctx.signaling.signal({ type: 'sync-load', source });
-      ctx.syncMode.setSourceMode('torbox'); // reveal the player (hide the stremio panel)
-      notice(`Streaming: ${meta.title}`, 'ok', 4000);
+      notice(`Playing ${pickerMeta.title} for everyone`, 'ok', 4000);
     } catch (err) {
       notice(`Playback failed: ${err.message || err}`, 'error', 5000);
-      btn.disabled = false;
-      btn.textContent = 'Retry';
+    } finally {
+      row.disabled = false;
+      if (q) q.textContent = was;
     }
   }
 
-  // A Stremio stream → { url, torrentMeta }. Direct `url` wins; otherwise an
-  // `infoHash` goes through TorBox (whose meta carries any .srt/.vtt files).
   async function resolveStream(stream, onProgress) {
     if (stream.url) return { url: stream.url, torrentMeta: null };
     if (stream.infoHash) {
@@ -879,17 +845,17 @@ export function createStremio(ctx) {
     return { url: null, torrentMeta: null };
   }
 
-  // Feed subtitles into the CC panel: (B1) .srt/.vtt inside the torrent for an
-  // infoHash stream, (B2) a stream's own `subtitles` array, and (B3) the
-  // add-on's /subtitles resource for this id. Add-on subs are lazy-loaded from
-  // the panel (a title can carry dozens of languages).
+  // Subtitles into the CC panel: torrent .srt/.vtt (infoHash path), a stream's
+  // own subtitles[], and the add-on's /subtitles resource.
   async function applySubs(stream, meta, torrentMeta) {
     ctx.tracks.setTorrentSubs(torrentMeta || null);
     const subs = [];
-    const push = (s) => { if (s?.url) subs.push({ lang: s.lang || s.language || s.id || 'Subtitle', url: s.url }); };
-    for (const s of stream.subtitles || []) push(s); // B2
+    const push = (s) => {
+      if (s?.url) subs.push({ lang: s.lang || s.language || s.id || 'Subtitle', url: s.url });
+    };
+    for (const s of stream.subtitles || []) push(s);
     try {
-      const data = await proxy('subtitles', { type: meta.type, id: meta.id }); // B3
+      const data = await proxy('subtitles', { type: meta.type, id: meta.id });
       for (const s of data?.subtitles || []) push(s);
     } catch {
       // add-on has no /subtitles resource for this id — fine
@@ -899,16 +865,11 @@ export function createStremio(ctx) {
     ctx.tracks.renderTracksPanel();
   }
 
-  // A watcher follows the sharer's Stremio load. Re-resolve the same title from
-  // an add-on (add-on URLs are debrid/IP-locked, so the sharer's resolvedUrl
-  // usually won't play for us): our OWN add-on if we have one, else the sharer's
-  // borrowed one (Part C — held in memory only). Then load it, wire subtitles
-  // (Part B, watcher side), and show a "following {name}" note.
+  // ---- watcher side ----
   async function followStream(source, fromName) {
-    if (!getAddonUrl() && source.addonUrl) followAddon = source.addonUrl; // borrow, in memory
-    const addon = getEffectiveAddon();
-    if (!addon) {
-      notice('Load your Stremio add-on (Sync → Stremio) to follow this stream.', 'warn');
+    if (!getAddonUrl() && source.addonUrl) followAddon = source.addonUrl; // borrow, in memory only
+    if (!getEffectiveAddon()) {
+      notice('Load your Stremio add-on (Stremio tab) to follow this stream.', 'warn');
       return false;
     }
     try {
@@ -926,7 +887,7 @@ export function createStremio(ctx) {
       } catch {
         // fall through to the sharer's URL
       }
-      if (!url && source.resolvedUrl) url = source.resolvedUrl; // last resort (may be IP-locked)
+      if (!url && source.resolvedUrl) url = source.resolvedUrl;
       if (!url) {
         notice('Could not resolve this stream from the add-on.', 'warn', 4000);
         return false;
@@ -947,23 +908,24 @@ export function createStremio(ctx) {
       const map = JSON.parse(localStorage.getItem('hash_meta') || '{}');
       map[source.streamId] = { title: source.title };
       localStorage.setItem('hash_meta', JSON.stringify(map));
-    } catch {
-      // cosmetic
-    }
+    } catch {}
   }
 
-  // Called by setSourceMode('stremio'): restore the saved add-on + its URL.
-  // A follower borrowing the sharer's add-on can search it too — but we never
-  // put that URL in the input (it's a secret); we just say so.
+  // Called when the Stremio tab is opened.
   function activate() {
     const saved = getAddonUrl();
+    $('stremio-chip').hidden = false;
     if (saved) {
-      $('stremio-url').value = saved;
+      $('stremio-chip-name').textContent = manifest?.name || 'Add-on';
       if (!manifest) loadAddon(saved);
+      else showPane('browse');
     } else if (followAddon) {
-      status('Following the host’s add-on — search a title to browse it, or paste your own above.', 'ok');
+      $('stremio-chip-name').textContent = 'Host’s add-on';
+      showPane('browse');
+      status('Following the host’s add-on — search a title to browse it.', 'ok');
     } else {
-      status('Paste a Stremio add-on URL (…/manifest.json) and press Load.');
+      $('stremio-chip-name').textContent = 'No add-on';
+      showPane('setup');
     }
   }
 

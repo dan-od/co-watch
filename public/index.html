@@ -13,281 +13,445 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <!-- Landing view -->
   <section id="landing" hidden>
-    <h1 class="wordmark">COWATCH</h1>
+    <span class="wordmark">Co<b>Watch</b></span>
     <p>Watch something together. Create a room and send the link to up to five friends.</p>
-    <button id="create-room" class="primary">Create room</button>
+    <button id="create-room" class="btn">Create room</button>
   </section>
 
-  <!-- Room view: one fixed window — top bar / stage / control bar -->
-  <section id="room" hidden>
+  <!-- Room: fixed window — topbar / body(stage + chat) / control bar -->
+  <section id="room" class="app" hidden>
 
-    <header id="topbar">
-      <div class="topbar-left">
-        <span class="wordmark">COWATCH</span>
-        <span id="status-wrap"><span id="status-dot"></span><span id="status">Connecting…</span></span>
-        <span id="net-wrap" title="Network stats appear once the call is up"><span id="net-dot"></span><span id="net-label">No call</span></span>
-        <span id="live-chip" title="Playback is syncing to everyone in the room" hidden><i class="live-dot"></i>Live</span>
+    <!-- ================= TOP BAR ================= -->
+    <header class="topbar" id="topbar">
+      <div class="brand">
+        <span class="wordmark">Co<b>Watch</b></span>
+        <span class="status" id="status-wrap">
+          <span class="dot" id="status-dot"></span>
+          <span id="status">Connecting…</span>
+        </span>
+        <span class="status net" id="net-wrap" title="Network stats appear once the call is up">
+          <span class="dot dim" id="net-dot"></span>
+          <span id="net-label">No call</span>
+        </span>
+        <span id="live-chip" class="live-chip" title="Playback is syncing to everyone in the room" hidden>
+          <i class="live-dot"></i>Live
+        </span>
       </div>
 
-      <nav id="mode-tabs">
-        <button id="mode-screen" class="tab active">Share</button>
-        <button id="mode-sync" class="tab">Sync</button>
-      </nav>
+      <div class="modes" role="tablist" aria-label="Watch mode">
+        <button class="mode" id="mode-screen" role="tab" aria-selected="false">Share</button>
+        <button class="mode" id="mode-sync" role="tab" aria-selected="false">Sync</button>
+        <button class="mode" id="mode-stremio" role="tab" aria-selected="true">Stremio</button>
+      </div>
 
       <div class="topbar-right">
-        <input id="room-link" readonly title="Room link">
-        <button id="copy-link" class="ghost">Copy</button>
-        <button id="settings-btn" class="icon-btn" title="TorBox settings" aria-label="TorBox settings">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <div class="roomlink">
+          <code><input id="room-link" readonly title="Room link"></code>
+          <button class="copy" id="copy-link">Copy</button>
+        </div>
+        <button class="icon-btn" id="settings-btn" title="Settings — TorBox &amp; TMDb keys" aria-label="Settings">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.2.63.78 1.06 1.51 1H21a2 2 0 1 1 0 4h-.09c-.73 0-1.31.43-1.51 1z"/></svg>
         </button>
       </div>
 
       <!-- Settings popover -->
-      <div id="settings-panel" hidden>
-        <h3>Settings</h3>
-        <label for="torbox-key">TorBox API key</label>
-        <div class="key-row">
-          <input id="torbox-key" type="password" placeholder="Paste your TorBox API key" autocomplete="off">
-          <button id="torbox-eye" class="ghost key-eye" type="button" title="Show key" aria-label="Show key">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-          <button id="torbox-save" class="ghost">Save</button>
+      <div id="settings-panel" class="pop settings-pop" hidden>
+        <div class="pop-head"><h3>Settings</h3></div>
+        <div class="pop-body">
+          <div class="field">
+            <span class="label" id="torbox-label">TorBox API key</span>
+            <div class="input-row">
+              <input id="torbox-key" type="password" placeholder="Paste your TorBox API key" autocomplete="off" aria-labelledby="torbox-label">
+              <button id="torbox-eye" class="icon-btn key-eye" type="button" title="Show key" aria-label="Show key">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+              <button id="torbox-save" class="btn ghost">Save</button>
+            </div>
+            <p id="torbox-key-status" class="key-status"></p>
+            <p class="hint">From torbox.app/dashboard. Stored only in this browser and sent per-request through this room's server (never stored there).</p>
+          </div>
+          <div class="field">
+            <span class="label" id="tmdb-label">TMDb API key</span>
+            <div class="input-row">
+              <input id="tmdb-key" type="password" placeholder="Paste your TMDb API key" autocomplete="off" aria-labelledby="tmdb-label">
+              <button id="tmdb-eye" class="icon-btn key-eye" type="button" title="Show key" aria-label="Show key">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+              <button id="tmdb-save" class="btn ghost">Save</button>
+            </div>
+            <p id="tmdb-key-status" class="key-status"></p>
+            <p class="hint">Powers title search (posters, ratings). Free key from themoviedb.org. Same storage rules as above.</p>
+          </div>
         </div>
-        <p id="torbox-key-status" class="key-status"></p>
-        <p class="hint">From torbox.app/dashboard. Stored only in this browser and sent per-request
-          through this room's server (never stored there).</p>
-        <label for="tmdb-key">TMDb API key</label>
-        <div class="key-row">
-          <input id="tmdb-key" type="password" placeholder="Paste your TMDb API key" autocomplete="off">
-          <button id="tmdb-eye" class="ghost key-eye" type="button" title="Show key" aria-label="Show key">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-          <button id="tmdb-save" class="ghost">Save</button>
-        </div>
-        <p id="tmdb-key-status" class="key-status"></p>
-        <p class="hint">Powers the metadata search (posters, ratings). Free key from themoviedb.org.
-          Same storage rules as above.</p>
       </div>
     </header>
 
-    <div id="stage">
-      <div id="stage-main">
-        <!-- Mode A: screen share -->
-        <div id="screen-pane">
-          <video id="screen-video" autoplay playsinline hidden></video>
-          <div id="share-placeholder" class="placeholder">
-            <p>Nothing shared yet.<br>Pick the <strong>tab</strong> playing the video — not your whole screen.</p>
-          </div>
-        </div>
+    <!-- ================= BODY: stage + chat ================= -->
+    <div class="body">
+      <main class="stage" id="stage-main">
 
-        <!-- Mode B: sync playback -->
-        <div id="sync-pane" hidden>
-          <div id="sync-player"></div>
-          <div id="sync-placeholder" class="placeholder">
-            <p>Paste a YouTube, Vimeo, or direct video link below —<br>or flip to TorBox for magnets.</p>
-          </div>
-
-          <!-- Metadata search (Phase 4e): browse TMDb metadata, keep a watchlist.
-               Finds metadata ONLY — playing something still means pasting your
-               own link/magnet in the URL or TorBox source. -->
-          <div id="search-panel" hidden>
-            <div id="search-panel-head">
-              <select id="search-type" title="Filter by type">
-                <option value="all">All</option>
-                <option value="movie">Movies</option>
-                <option value="tv">TV shows</option>
-              </select>
-              <input id="search-year" type="number" min="1900" max="2099" placeholder="Year">
-              <span class="hint" id="search-hint">Metadata only — pick something, then paste your own link in URL or TorBox.</span>
-              <button id="watchlist-toggle" class="ghost">Watchlist</button>
+        <!-- ---------- SHARE ---------- -->
+        <section class="view" id="view-share">
+          <div class="center" id="share-idle">
+            <div class="card">
+              <span class="label">Share</span>
+              <h2>Show your screen to the room</h2>
+              <p>Pick a browser tab and everyone sees it, audio included. A tab keeps CoWatch itself out of the picture — sharing a whole window puts this app on screen too.</p>
+              <div class="actions">
+                <button class="btn" id="share-screen" disabled title="Available once someone joins">Share a tab</button>
+              </div>
+              <p class="hint" id="share-hint">Playback controls stay with you while you share. Everyone else watches — <b>Resync</b> pushes your position if someone falls behind.</p>
             </div>
-            <p id="search-status" class="hint"></p>
-            <div id="search-results"></div>
-            <div id="search-detail" hidden></div>
           </div>
 
-          <!-- Stremio: add-on catalogs / TMDb discovery → seasons → add-on
-               streams → play. Body swaps between discovery grid, season list,
-               and stream list; the nav bar is the breadcrumb/back. -->
-          <div id="stremio-panel" hidden>
-            <div id="stremio-head">
-              <label class="panel-label" for="stremio-url">Stremio add-on URL</label>
-              <div class="stremio-addon-row">
-                <input id="stremio-url" placeholder="https://…/manifest.json" autocomplete="off">
-                <button id="stremio-load" class="ghost">Load</button>
-                <span id="stremio-addon" class="stremio-addon-tag" hidden></span>
+          <div class="share-live" id="screen-pane" hidden>
+            <div class="share-banner">
+              <span class="dot"></span>
+              <div>
+                <div class="t" id="share-live-title">Sharing your screen</div>
+                <div class="m" id="share-live-meta">tab audio on</div>
+              </div>
+              <button class="btn danger" id="share-stop">Stop sharing</button>
+            </div>
+            <div class="surface">
+              <video id="screen-video" autoplay playsinline hidden></video>
+              <div class="plate" id="share-placeholder">
+                <div>
+                  <div class="k">Nothing shared yet</div>
+                  <div class="n">Pick the tab playing the video — not your whole screen.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- SYNC (URL / TorBox) ---------- -->
+        <section class="view" id="view-sync">
+          <div class="center">
+            <div class="card">
+              <span class="label">Sync</span>
+              <h2 style="margin-bottom:16px">Load something for the room</h2>
+
+              <div class="subtabs" role="group" aria-label="Source">
+                <button id="source-url" aria-pressed="true">URL</button>
+                <button id="source-torbox" aria-pressed="false">TorBox</button>
+                <button id="source-stremio" hidden>Stremio</button>
+              </div>
+
+              <form id="sync-form">
+                <div class="field">
+                  <span class="label" id="sync-input-label">Video URL</span>
+                  <div class="input-row">
+                    <input id="sync-input" placeholder="YouTube, Vimeo, or a direct .mp4 / .webm link" autocomplete="off" aria-labelledby="sync-input-label">
+                    <button id="sync-load" type="submit" class="btn">Load</button>
+                    <span id="sync-spinner" class="spinner" hidden></span>
+                  </div>
+                </div>
+              </form>
+              <p class="hint" id="sync-hint">Loads for everyone at once. Play, pause, and seek stay in sync from there.</p>
+
+              <div class="filelist" id="file-select" hidden></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- STREMIO: browse / detail / setup ---------- -->
+        <section class="view" id="view-stremio">
+
+          <!-- browse: search rail + poster grid -->
+          <div class="stremio-browse" id="stremio-panel">
+            <div class="rail">
+              <label class="search">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input id="stremio-search" aria-label="Search titles" placeholder="Search a title">
+              </label>
+              <button class="btn" id="stremio-search-btn">Search</button>
+              <div class="segmented" id="stremio-type" role="group" aria-label="Filter results">
+                <button data-type="all" aria-pressed="true">All</button>
+                <button data-type="movie" aria-pressed="false">Movies</button>
+                <button data-type="tv" aria-pressed="false">TV</button>
               </div>
               <select id="stremio-catalog" hidden></select>
+              <div class="result-count" id="stremio-count"></div>
             </div>
-            <div id="stremio-nav" hidden>
-              <button id="stremio-back" class="ghost">← Back</button>
-              <span id="stremio-crumb" class="stremio-crumb"></span>
+            <p id="stremio-status" class="hint rail-status"></p>
+            <div class="grid-wrap">
+              <div class="grid" id="stremio-results"></div>
             </div>
-            <p id="stremio-status" class="hint"></p>
-            <div id="stremio-results"></div>
           </div>
 
-          <!-- Spectate (browse-cast): read-only cinematic mirror of the HOST's
-               Stremio browsing — search results, seasons, episodes, streams.
-               Fed by 'browse' signals; hidden when playback starts. -->
-          <div id="spectate-panel" hidden>
-            <div id="spectate-head">
-              <i class="live-dot"></i>
-              <span id="spectate-title">Someone is browsing</span>
-              <span class="hint spectate-hint">watch along — they drive</span>
-              <button id="spectate-close" class="ghost">Hide</button>
+          <!-- detail: backdrop + facts (left) · seasons (right) -->
+          <div class="detail" id="stremio-detail" hidden>
+            <div class="detail-left">
+              <div class="backdrop" id="detail-backdrop"></div>
+              <div class="detail-inner">
+                <button class="back" id="stremio-back">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 18 9 12l6-6"/></svg>
+                  Back to results
+                </button>
+                <div class="head">
+                  <div class="poster-lg" id="detail-poster"></div>
+                  <div>
+                    <span class="label" id="detail-kind">Series</span>
+                    <h1 id="detail-title"></h1>
+                    <div class="facts" id="detail-facts"></div>
+                    <p class="overview" id="detail-overview"></p>
+                    <div class="addon-chip">
+                      <span class="dot"></span> <span id="stremio-addon">Add-on</span>
+                      <button class="copy" id="stremio-change">Change</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div id="spectate-body"></div>
+            <aside class="detail-right">
+              <div class="pane-head">
+                <h2>Episodes</h2>
+                <span class="count" id="detail-season-count"></span>
+              </div>
+              <div class="seasons" id="stremio-seasons"></div>
+            </aside>
           </div>
 
-          <!-- Torlink: torrent search (YTS movies + EZTV TV) → TorBox resolve/stream. -->
-          <div id="torlink-panel" hidden>
-            <div id="torlink-head">
-              <select id="torlink-type" title="Filter by type">
-                <option value="all">All</option>
-                <option value="movie">Movies</option>
-                <option value="tv">TV shows</option>
-              </select>
-              <span class="hint">Cached picks stream instantly; others download to your TorBox first.</span>
+          <!-- setup: paste an add-on -->
+          <div class="setup" id="stremio-setup" hidden>
+            <div class="card setup-card">
+              <span class="label">Stremio mode</span>
+              <h2 style="margin-top:6px">Load an add-on to browse</h2>
+              <p>Paste a Stremio add-on manifest URL. CoWatch reads its catalogs and streams — the URL stays in this browser.</p>
+              <div class="field">
+                <span class="label" id="stremio-url-label">Add-on manifest URL</span>
+                <input id="stremio-url" placeholder="https://…/manifest.json" autocomplete="off" aria-labelledby="stremio-url-label">
+              </div>
+              <div class="actions">
+                <button class="btn" id="stremio-load">Load add-on</button>
+                <button class="btn ghost" id="stremio-cancel">Cancel</button>
+              </div>
+              <p class="hint">Title search also needs a TMDb key — add it under the gear, top right. Keys never leave this browser.</p>
             </div>
-            <p id="torlink-status" class="hint"></p>
-            <div id="torlink-results"></div>
           </div>
+        </section>
+
+        <!-- ---------- WATCHING ---------- -->
+        <section class="view" id="view-watch">
+          <div class="player" id="sync-pane">
+            <div class="frame" id="player-frame"></div>
+            <div id="sync-player"></div>
+
+            <div class="title-strip" id="watch-title-strip" hidden>
+              <span class="n" id="watch-title"></span>
+              <span class="m" id="watch-sub"></span>
+            </div>
+
+            <div class="paused-plate" id="paused-plate" hidden>
+              <div>
+                <div class="k" id="paused-by">Paused</div>
+                <div class="n" id="paused-title"></div>
+                <div class="s" id="paused-at"></div>
+              </div>
+            </div>
+
+            <div class="plate" id="sync-placeholder">
+              <div>
+                <div class="k">Nothing playing</div>
+                <div class="n">Browse in Stremio, or load a link under Sync.</div>
+              </div>
+            </div>
+
+            <!-- custom transport (native video only; iframes keep their own) -->
+            <div class="overlay" id="player-overlay" hidden>
+              <div class="scrub" id="scrub">
+                <div class="track"></div>
+                <div class="buf" id="buf"></div>
+                <div class="fill" id="fill"></div>
+                <div class="peer-mark" id="peerMark" hidden></div>
+                <div class="knob" id="knob"></div>
+              </div>
+              <div class="o-row">
+                <button class="o-btn" id="playBtn" aria-label="Play or pause">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                </button>
+                <span class="time"><b id="cur">0:00</b> / <span id="dur">0:00</span></span>
+                <div class="sync-lock" id="syncLock" hidden>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                  <span id="syncText">In sync</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Spectate: read-only mirror of the host's browsing -->
+        <div id="spectate-panel" hidden>
+          <div id="spectate-head">
+            <i class="live-dot"></i>
+            <span id="spectate-title">Someone is browsing</span>
+            <span class="hint spectate-hint">watch along — they drive</span>
+            <button id="spectate-close" class="btn ghost">Hide</button>
+          </div>
+          <div id="spectate-body"></div>
         </div>
 
-        <!-- Camera grid (mesh): one tile per person, self included. Fills the
-             stage until content is live, then shrinks to a bottom strip
-             (theater). Tiles are injected by js/ui/tiles.js. -->
+        <!-- Stream picker (slide-in drawer) -->
+        <div class="scrim" id="scrim"></div>
+        <aside class="picker" id="picker" aria-label="Choose a stream">
+          <div class="picker-head">
+            <span class="k" id="picker-kicker">Movie</span>
+            <h2 id="picker-title"></h2>
+            <p id="picker-sub"></p>
+            <button class="icon-btn picker-close" id="picker-close" aria-label="Close">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div class="streams" id="picker-list"></div>
+        </aside>
+
+        <!-- Camera tiles (mesh) — grid while hanging out, strip while watching -->
         <div id="cam-grid" data-count="0"></div>
-        <!-- Mobile: everyone not in a big slot collapses to name chips -->
         <div id="cam-chips" hidden></div>
 
-        <div id="reactions-layer" aria-hidden="true"></div>
+        <div class="fx" id="reactions-layer" aria-hidden="true"></div>
         <p id="ptt-indicator" hidden>🎙 Speaking…</p>
         <p id="notice" class="notice" hidden></p>
-        <button id="tap-to-play" hidden>Click to start video &amp; sound</button>
+        <button id="tap-to-play" class="btn" hidden>Click to start video &amp; sound</button>
 
-        <div id="media-error" hidden>
-          <p id="media-error-text"></p>
-          <button id="retry-media" class="primary">Try again</button>
+        <div class="reconnect" id="media-error" hidden>
+          <div>
+            <p id="media-error-text"></p>
+            <button id="retry-media" class="btn">Try again</button>
+          </div>
         </div>
-      </div>
 
-      <aside id="chat-rail">
-        <!-- Rail header: title + live occupancy + invite (reuses copy-link).
-             PiP relocates #messages/#send-form only, so this stays put. -->
-        <div id="chat-head">
-          <span class="chat-title">Room Chat</span>
-          <span id="online-chip" title="People in the room">1 here</span>
-          <button id="invite-btn" class="ghost" title="Copy the room link">Invite</button>
+        <!-- Mixer popover -->
+        <div class="pop" id="mixer-panel" hidden>
+          <div class="pop-head">
+            <h3>Mixer</h3>
+            <button class="icon-btn pop-close" data-close="mixer-panel" aria-label="Close">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div class="pop-body">
+            <div id="mixer-people"></div>
+            <p id="mixer-empty" class="hint">No one else here yet.</p>
+            <div class="mix">
+              <span class="who movie">Movie</span>
+              <input id="mix-media" type="range" min="0" max="100" aria-label="Movie volume">
+            </div>
+            <div class="mix master">
+              <span class="who">Master</span>
+              <input id="mix-master" type="range" min="0" max="100" aria-label="Master volume">
+            </div>
+            <p class="hint" style="font-size:11.5px">Levels are remembered until you leave.</p>
+          </div>
         </div>
-        <div id="messages" aria-live="polite"></div>
-        <form id="send-form">
-          <input id="send-input" placeholder="Message…" autocomplete="off">
-          <button type="submit" class="ghost">Send</button>
+
+        <!-- Subtitles & audio popover -->
+        <div class="pop" id="tracks-panel" hidden>
+          <div class="pop-head">
+            <h3>Subtitles &amp; audio</h3>
+            <button class="icon-btn pop-close" data-close="tracks-panel" aria-label="Close">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div class="pop-body">
+            <div class="sub-group">
+              <span class="label">Subtitles</span>
+              <div id="sub-list"></div>
+            </div>
+            <div class="sub-group" id="torrent-subs"></div>
+            <div class="sub-group" id="addon-subs"></div>
+            <div class="sub-group">
+              <span class="label">Audio track</span>
+              <div id="audio-list"></div>
+            </div>
+            <div class="sub-group" style="margin-bottom:0">
+              <span class="label">Your own file</span>
+              <button class="upload" id="sub-from-file">Load an .srt or .vtt</button>
+              <input id="sub-file-input" type="file" accept=".srt,.vtt" hidden>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dormant panels (kept for the search/torlink fallbacks) -->
+        <div id="search-panel" hidden>
+          <select id="search-type" hidden><option value="all">All</option><option value="movie">Movies</option><option value="tv">TV shows</option></select>
+          <input id="search-year" type="number" hidden>
+          <button id="watchlist-toggle" hidden>Watchlist</button>
+          <p id="search-status" hidden></p>
+          <div id="search-results"></div>
+          <div id="search-detail" hidden></div>
+        </div>
+        <div id="torlink-panel" hidden>
+          <select id="torlink-type" hidden><option value="all">All</option><option value="movie">Movies</option><option value="tv">TV shows</option></select>
+          <p id="torlink-status" hidden></p>
+          <div id="torlink-results"></div>
+        </div>
+      </main>
+
+      <!-- ================= CHAT ================= -->
+      <aside class="chat" id="chat-rail" aria-label="Room chat">
+        <div class="chat-head" id="chat-head">
+          <h3>Chat</h3>
+          <span id="online-chip">1 here</span>
+          <button class="copy" id="invite-btn" title="Copy the room link">Invite</button>
+        </div>
+        <div class="msgs" id="messages" aria-live="polite"></div>
+        <form class="chat-input" id="send-form">
+          <input id="send-input" placeholder="Say something" autocomplete="off">
+          <button type="submit" class="btn">Send</button>
         </form>
       </aside>
     </div>
 
-    <footer id="controlbar">
-      <!-- Mode-specific action area -->
-      <div id="action-share" class="action-area">
-        <button id="share-screen" class="primary" disabled title="Available once someone joins">Share a tab</button>
-        <span class="hint" id="share-hint">Pick the tab playing the video — not your whole screen.</span>
+    <!-- ================= CONTROL BAR ================= -->
+    <footer class="controlbar" id="controlbar">
+      <div class="cb-left">
+        <div id="action-share" class="cb-slot" hidden></div>
+        <div id="action-sync" class="cb-slot" hidden></div>
+        <button class="pill" id="stremio-chip" hidden>
+          <span class="dot"></span> <span id="stremio-chip-name">Add-on</span>
+        </button>
+        <button class="pill" id="watch-browse" hidden>← Browse</button>
       </div>
 
-      <div id="action-sync" class="action-area" hidden>
-        <div id="source-toggle" role="group" aria-label="Source type">
-          <span class="seg-group" aria-label="Paste a link">
-            <button id="source-url" class="seg active">URL</button>
-            <button id="source-torbox" class="seg">TorBox</button>
+      <div class="cb-center">
+        <button class="pill" id="resync" disabled title="Push your current position to the room">Resync</button>
+        <button class="pill" id="tracks-btn" hidden title="Subtitles &amp; audio">CC</button>
+        <button class="pill" id="mixer-btn" title="Audio mixer">🎚 Mixer</button>
+      </div>
+
+      <div class="cb-right">
+        <div class="emojis" id="react-wrap">
+          <span class="cool-rail"></span>
+          <button class="icon-btn" id="react-btn" title="Send a reaction" aria-label="Send a reaction">🙂</button>
+          <span id="reaction-bar">
+            <button data-emoji="❤️" title="Send ❤️">❤️</button>
+            <button data-emoji="😂" title="Send 😂">😂</button>
+            <button data-emoji="😮" title="Send 😮">😮</button>
+            <button data-emoji="😢" title="Send 😢">😢</button>
+            <button data-emoji="😡" title="Send 😡">😡</button>
+            <button data-emoji="🎉" title="Send 🎉">🎉</button>
           </span>
-          <span class="seg-div" aria-hidden="true"></span>
-          <span class="seg-group" aria-label="Discover a title">
-            <button id="source-stremio" class="seg">Stremio</button>
-          </span>
         </div>
-        <form id="sync-form">
-          <input id="sync-input" placeholder="YouTube / Vimeo / .mp4 URL" autocomplete="off">
-          <select id="file-select" hidden title="Pick a file from the torrent"></select>
-          <button id="sync-load" type="submit" class="primary">Load</button>
-          <button type="button" id="resync" class="ghost" disabled title="Push your current position to your friend">Resync</button>
-          <button type="button" id="tracks-btn" class="ghost" hidden title="Subtitles &amp; audio tracks">CC</button>
-          <span id="sync-spinner" class="spinner" hidden></span>
-        </form>
-      </div>
-
-      <!-- Subtitles & audio popover (native player only; per-person, not synced) -->
-      <div id="tracks-panel" hidden>
-        <h3>Subtitles</h3>
-        <div id="sub-list"></div>
-        <div id="torrent-subs"></div>
-        <div id="addon-subs"></div>
-        <div class="tracks-actions">
-          <button id="sub-from-file" class="ghost">Load .srt / .vtt file…</button>
-          <input id="sub-file-input" type="file" accept=".srt,.vtt" hidden>
-        </div>
-        <h3>Audio</h3>
-        <div id="audio-list"></div>
-      </div>
-
-      <!-- Audio mixer (Part: per-person + movie + master volume) -->
-      <div id="mixer-panel" hidden>
-        <h3>Audio mixer</h3>
-        <div class="mix-row mix-fixed">
-          <span class="mix-name">Master</span>
-          <input id="mix-master" type="range" min="0" max="100" aria-label="Master volume">
-        </div>
-        <div class="mix-row mix-fixed">
-          <span class="mix-name">Movie</span>
-          <input id="mix-media" type="range" min="0" max="100" aria-label="Movie volume">
-        </div>
-        <div class="mix-people-head">People</div>
-        <p id="mixer-empty" class="hint">No one else here yet.</p>
-        <div id="mixer-people"></div>
-      </div>
-
-      <!-- Emoji reactions (Phase 6b; collapses to a popover on mobile) -->
-      <div id="react-wrap">
-        <button id="react-btn" class="icon-btn" title="Send a reaction" aria-label="Send a reaction">🙂</button>
-        <div id="reaction-bar" aria-label="Send a reaction">
-          <button data-emoji="❤️" title="Send ❤️">❤️</button>
-          <button data-emoji="😂" title="Send 😂">😂</button>
-          <button data-emoji="😮" title="Send 😮">😮</button>
-          <button data-emoji="😢" title="Send 😢">😢</button>
-          <button data-emoji="😡" title="Send 😡">😡</button>
-          <button data-emoji="🎉" title="Send 🎉">🎉</button>
-        </div>
-      </div>
-
-      <!-- Control cluster -->
-      <div id="cluster">
-        <button id="ptt-hold" title="Hold to speak">Hold to talk</button>
-        <button id="ptt" class="icon-btn" title="Enable push-to-talk">PTT</button>
-        <button id="popout" class="icon-btn" title="Pop cameras + chat into a floating window">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="14" rx="1"/><rect x="12" y="10" width="8" height="6" fill="currentColor" stroke="none"/></svg>
+        <button class="pill icon-pill" id="toggle-mic" title="Mute microphone" aria-label="Mute microphone">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg>
         </button>
-        <button id="toggle-mic" class="icon-btn" title="Mute microphone">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg>
+        <button class="pill icon-pill" id="toggle-cam" title="Turn camera off" aria-label="Turn camera off">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="13" height="12" rx="1"/><path d="M15 10l7-4v12l-7-4"/></svg>
         </button>
-        <button id="toggle-cam" class="icon-btn" title="Turn camera off">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="13" height="12" rx="1"/><path d="M15 10l7-4v12l-7-4"/></svg>
+        <button class="pill icon-pill" id="popout" title="Pop cameras + chat into a floating window" aria-label="Pop out">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="14" rx="1"/><rect x="12" y="10" width="8" height="6" fill="currentColor" stroke="none"/></svg>
         </button>
-        <button id="mixer-btn" class="icon-btn" title="Audio mixer" aria-label="Audio mixer">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
-        </button>
-        <button id="toggle-chat" class="icon-btn active" title="Hide chat">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        </button>
-        <button id="leave" class="icon-btn danger" title="Leave room">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-        </button>
+        <button class="pill" id="ptt" title="Enable push-to-talk">Push to talk</button>
+        <button class="pill" id="ptt-hold" title="Hold to speak">Hold to talk</button>
+        <button class="pill" id="toggle-chat" title="Hide chat">Chat</button>
+        <button class="pill leave" id="leave" title="Leave room">Leave</button>
       </div>
     </footer>
   </section>

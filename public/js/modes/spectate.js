@@ -65,16 +65,17 @@ export function createSpectate(ctx) {
   const renderers = {
     grid(d) {
       if (d.label) body().append(el('p', 'spectate-label', d.label));
-      const grid = el('div', 'results-grid');
+      const grid = el('div', 'grid');
       for (const item of d.items || []) {
         const card = el('div', 'poster-card');
         card.title = item.name || '';
-        card.append(poster(item.poster));
-        const overlay = el('div', 'poster-overlay');
-        overlay.append(el('h4', '', item.name || 'Untitled'));
-        const meta = [item.year, item.kind].filter(Boolean).join(' · ');
-        if (meta) overlay.append(el('span', 'poster-meta', meta));
-        card.append(overlay);
+        const art = el('div', 'poster');
+        art.append(poster(item.poster));
+        if (item.kind) art.append(el('span', 'badge-type', item.kind));
+        const meta = el('div', 'meta');
+        meta.append(el('div', 't', item.name || 'Untitled'));
+        if (item.year) meta.append(el('div', 'y', String(item.year)));
+        card.append(art, meta);
         grid.append(card);
       }
       body().append(grid);

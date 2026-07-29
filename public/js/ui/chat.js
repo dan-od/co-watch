@@ -1,41 +1,40 @@
 // Text chat, relayed over the signaling socket. The message + form nodes are
 // stable references (ctx.els) because the Document PiP companion relocates them
-// out of the main document (#chat-head stays in the rail — only messages/form
-// move, and they re-append after it on return, preserving order).
+// out of the main document (#chat-head stays in the rail).
 //
-// Message layout (design pass): the sender's name sits as a small dim label
-// ABOVE the bubble (skipped for consecutive messages from the same sender, and
-// for your own — yours are right-aligned gold-tinted). Join/leave events land
-// as small centered system lines so the log keeps a trace of who came and went.
+// Layout per the mockups: a mono "Name · time" line above each message, and
+// join/leave events as italic system lines.
 
 import { $ } from '../lib/dom.js';
+
+const clock = () =>
+  new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 
 export function createChat(ctx) {
   const elMessages = ctx.els.messages;
   const elSendForm = ctx.els.sendForm;
-  let lastSender = null; // group consecutive messages: name label only on change
 
   function appendMessage(who, text) {
     const mine = who === 'You';
-    if (!mine && who !== lastSender) {
-      const name = document.createElement('div');
-      name.className = 'msg-name';
-      name.textContent = who;
-      elMessages.append(name);
-    }
-    lastSender = who;
     const div = document.createElement('div');
-    div.className = `msg ${mine ? 'mine' : 'theirs'}`;
-    div.textContent = text;
+    div.className = `msg${mine ? ' mine' : ''}`;
+    const head = document.createElement('div');
+    head.className = 'who';
+    head.textContent = who;
+    const time = document.createElement('span');
+    time.textContent = clock();
+    head.append(time);
+    const body = document.createElement('p');
+    body.textContent = text;
+    div.append(head, body);
     elMessages.append(div);
     elMessages.scrollTop = elMessages.scrollHeight;
   }
 
-  // Small centered dim line ("Sarah joined", "Marcus left").
+  // Italic centered line ("Sarah joined", "Marcus left").
   function appendSystem(text) {
-    lastSender = null; // next real message re-labels its sender
     const div = document.createElement('div');
-    div.className = 'msg-sys';
+    div.className = 'msg sys';
     div.textContent = text;
     elMessages.append(div);
     elMessages.scrollTop = elMessages.scrollHeight;

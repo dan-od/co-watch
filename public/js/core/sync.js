@@ -87,6 +87,8 @@ export function createSync(ctx) {
       $('tracks-btn').hidden = !player?.el; // subtitles/audio only on the native player
       $('live-chip').hidden = false; // topbar "Live" pulse while synced playback runs
       ctx.mixer.setMediaAdapter(player); // route movie volume through the mixer's media channel
+      ctx.controls.setMode('watch'); // the player takes the stage
+      ctx.playerUi.onLoaded(source); // transport overlay, title strip, sync lock
     } catch (err) {
       notice(`Could not load: ${err.message || err}`, 'error');
       $('sync-placeholder').hidden = false;
@@ -101,6 +103,7 @@ export function createSync(ctx) {
       player = null;
     }
     ctx.mixer.setMediaAdapter(null);
+    ctx.playerUi.onDestroyed();
     $('sync-player').replaceChildren();
     $('resync').disabled = true;
     $('live-chip').hidden = true;

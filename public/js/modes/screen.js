@@ -66,6 +66,7 @@ export function createScreen(ctx) {
     if (ctx.signaling.getShareBaton() === 'peer' || !ctx.signaling.isPeerPresent()) return;
     signal({ type: 'share-claim' }); // reply arrives as share-granted / share-denied
   });
+  $('share-stop').addEventListener('click', () => stopScreenShare());
 
   async function startScreenShare() {
     if (screenStream) return;
@@ -112,12 +113,21 @@ export function createScreen(ctx) {
   function showShareInfo(track) {
     const s = track.getSettings ? track.getSettings() : {};
     const names = { browser: 'a browser tab', window: 'an app window', monitor: 'your whole screen' };
-    let text = `Sharing ${names[s.displaySurface] || 'your screen'}`;
-    if (s.width && s.height) text += ` at ${s.width}×${s.height}`;
-    text += '.';
-    if (s.displaySurface === 'monitor')
-      text += ' Heads-up: a whole-screen share includes the popped-out cameras. Share a tab to keep them private.';
-    notice(text, s.displaySurface === 'monitor' ? 'warn' : 'ok', s.displaySurface === 'monitor' ? 0 : 4000);
+    const what = names[s.displaySurface] || 'your screen';
+    // Live banner (mockup): what + resolution/fps + whether audio came along.
+    $('share-live-title').textContent = `Sharing ${what}`;
+    const bits = [];
+    if (s.width && s.height) bits.push(`${s.width}×${s.height}`);
+    if (s.frameRate) bits.push(`${Math.round(s.frameRate)} fps`);
+    bits.push(screenStream?.getAudioTracks?.().length ? 'tab audio on' : 'no tab audio');
+    $('share-live-meta').textContent = bits.join(' · ');
+
+    if (s.displaySurface === 'monitor') {
+      notice(
+        'Heads-up: a whole-screen share includes the popped-out cameras. Share a tab to keep them private.',
+        'warn'
+      );
+    }
   }
 
   function stopScreenShare() {
@@ -144,8 +154,20 @@ export function createScreen(ctx) {
     updateShareButton();
   }
 
+  // Idle card ↔ live surface (the two Share states in the mockup).
+  function setLive(live, remoteName) {
+    $('share-idle').hidden = live;
+    $('screen-pane').hidden = !live;
+    $('share-stop').hidden = !!remoteName; // only the sharer can stop
+    if (remoteName) {
+      $('share-live-title').textContent = `${remoteName} is sharing`;
+      $('share-live-meta').textContent = 'watching along';
+    }
+  }
+
   function showScreen(stream, mine) {
     const sv = $('screen-video');
+    setLive(true, mine ? null : ctx.signaling.getMemberName(remoteSharerId));
     sv.srcObject = stream;
     sv.hidden = false;
     $('share-placeholder').hidden = true;
@@ -175,6 +197,7 @@ export function createScreen(ctx) {
     sv.srcObject = null;
     sv.hidden = true;
     $('share-placeholder').hidden = false;
+    setLive(false);
     ctx.mixer.detachMediaStream();
     ctx.controls.updateLayout(); // back to the full camera grid
   }

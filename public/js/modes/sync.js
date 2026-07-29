@@ -14,41 +14,32 @@ export function createSyncMode(ctx) {
   const notice = (text, kind, ms) => ctx.controls.notice(text, kind, ms);
   const loadSource = (source) => ctx.syncCore.loadSource(source);
 
-  // Source toggle: URL / TorBox (paste a link) · Search / Stremio (discover a
-  // title). Torlink is retired from the UI but its module stays wired as a
-  // fallback (still reachable via a pasted magnet through the TorBox flow).
+  // Source subtabs inside the Sync card: URL (paste a link) · TorBox (magnet).
+  // Stremio is its own top-level mode now; Torlink is retired from the UI but
+  // its module stays wired as a fallback (reachable via a pasted magnet).
   function setSourceMode(m) {
+    if (m !== 'url' && m !== 'torbox') m = 'url';
     sourceMode = m;
-    $('source-url').classList.toggle('active', m === 'url');
-    $('source-torbox').classList.toggle('active', m === 'torbox');
-    $('source-stremio').classList.toggle('active', m === 'stremio');
-    $('sync-input').placeholder =
-      m === 'torbox'
-        ? 'Magnet link or 40-char torrent hash'
-        : m === 'search'
-          ? 'Search for a movie or show…'
-          : m === 'stremio'
-            ? 'Search a title…'
-            : 'YouTube / Vimeo / .mp4 URL';
-    $('sync-load').textContent = m === 'search' || m === 'stremio' ? 'Search' : 'Load';
+    const torbox = m === 'torbox';
+    $('source-url').setAttribute('aria-pressed', String(!torbox));
+    $('source-torbox').setAttribute('aria-pressed', String(torbox));
+    $('sync-input-label').textContent = torbox ? 'Magnet link or torrent hash' : 'Video URL';
+    $('sync-input').placeholder = torbox
+      ? 'magnet:?xt=urn:btih:… or a 40-character hash'
+      : 'YouTube, Vimeo, or a direct .mp4 / .webm link';
+    $('sync-hint').textContent = torbox
+      ? 'Resolved through your own TorBox account, then played for everyone.'
+      : 'Loads for everyone at once. Play, pause, and seek stay in sync from there.';
     $('file-select').hidden = true;
-    $('search-panel').hidden = m !== 'search';
-    $('stremio-panel').hidden = m !== 'stremio';
-    if (m === 'search') ctx.search.checkTmdbKey();
-    if (m === 'stremio') ctx.stremio.activate();
   }
   $('source-url').addEventListener('click', () => setSourceMode('url'));
   $('source-torbox').addEventListener('click', () => setSourceMode('torbox'));
-  $('source-stremio').addEventListener('click', () => setSourceMode('stremio'));
 
   $('sync-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const raw = $('sync-input').value.trim();
     if (!raw) return;
-    if (sourceMode === 'search') ctx.search.runSearch(raw);
-    else if (sourceMode === 'torlink') ctx.torlink.run(raw);
-    else if (sourceMode === 'stremio') ctx.stremio.run(raw);
-    else if (sourceMode === 'torbox') loadTorbox(raw);
+    if (sourceMode === 'torbox') loadTorbox(raw);
     else loadFromUrl(raw);
   });
 
@@ -148,21 +139,47 @@ export function createSyncMode(ctx) {
     }
   }
 
+  // The torrent's video files as a pickable list (mockup's .filelist).
   function populateFileSelect(videos, torrentId, src) {
-    const sel = $('file-select');
-    sel.replaceChildren();
+    const box = $('file-select');
+    box.replaceChildren();
+
+    const head = document.createElement('div');
+    head.className = 'fh';
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = 'Pick a file';
+    const count = document.createElement('span');
+    count.className = 'c';
+    count.textContent = `${videos.length} video file${videos.length === 1 ? '' : 's'}`;
+    head.append(label, count);
+    box.append(head);
+
     for (const f of videos) {
-      const opt = document.createElement('option');
-      opt.value = f.id;
-      opt.textContent = `${f.name} (${(f.size / 1e9).toFixed(2)} GB)`;
-      opt.dataset.name = f.name;
-      sel.append(opt);
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'file';
+      row.setAttribute('aria-selected', 'false');
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = f.name;
+      nm.title = f.name;
+      const sz = document.createElement('span');
+      sz.className = 'sz';
+      sz.textContent = `${(f.size / 1e9).toFixed(2)} GB`;
+      const pick = document.createElement('span');
+      pick.className = 'pick';
+      pick.textContent = 'Play';
+      row.append(nm, sz, pick);
+      row.addEventListener('click', () => {
+        for (const other of box.querySelectorAll('.file')) other.setAttribute('aria-selected', 'false');
+        row.setAttribute('aria-selected', 'true');
+        loadTorboxFile(torrentId, f.id, src, f.name);
+      });
+      box.append(row);
     }
-    sel.hidden = false;
-    sel.onchange = () => {
-      const opt = sel.selectedOptions[0];
-      loadTorboxFile(torrentId, sel.value, src, opt?.dataset.name);
-    };
+    box.hidden = false;
+    box.querySelector('.file')?.setAttribute('aria-selected', 'true'); // largest plays first
   }
 
   async function loadTorboxFile(torrentId, fileId, src, fileName) {

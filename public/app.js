@@ -7,7 +7,6 @@
 // API on the hub.
 
 import { $ } from './js/lib/dom.js';
-import { isMobile } from './js/lib/env.js';
 import { createControls } from './js/ui/controls.js';
 import { createImmersive } from './js/ui/immersive.js';
 import { createMobileGuards } from './js/core/mobile.js';
@@ -24,6 +23,7 @@ import { createSearch } from './js/modes/search.js';
 import { createTorlink } from './js/modes/torlink.js';
 import { createStremio } from './js/modes/stremio.js';
 import { createSpectate } from './js/modes/spectate.js';
+import { createPlayerUi } from './js/ui/player-ui.js';
 import { createReactions } from './js/ui/reactions.js';
 import { createPtt } from './js/ui/ptt.js';
 import { createPip } from './js/ui/pip.js';
@@ -99,6 +99,7 @@ function enterRoom(roomId) {
   ctx.media = createMedia(ctx);
   ctx.netstats = createNetStats(ctx);
   ctx.syncCore = createSync(ctx);
+  ctx.playerUi = createPlayerUi(ctx); // watch-view transport overlay
   ctx.tracks = createTracks(ctx);
   ctx.screen = createScreen(ctx);
   ctx.syncMode = createSyncMode(ctx);
@@ -115,9 +116,10 @@ function enterRoom(roomId) {
   ctx.tiles.ensureTile('self', ctx.displayName); // you're always on the grid
   ctx.mobileGuards = createMobileGuards(ctx); // wake lock, bg video pause, fullscreen
 
-  // Mobile: screen capture is flaky-to-impossible on phones — Sync is the
-  // primary path there. Desktop keeps Share as the default tab.
-  if (isMobile()) ctx.controls.setMode('sync');
+  // Stremio is the primary way in (both on desktop and on phones, where screen
+  // capture is flaky-to-impossible). Must run after every module exists —
+  // switching modes calls into them.
+  ctx.controls.init('stremio');
 
   // Start-up side effects, deferred out of construction so every module's API
   // is registered before anything fires.

@@ -120,7 +120,11 @@ export function createSignaling(ctx) {
         // is our own arrival — announcing everyone already here would be noise.
         if (seenRoomState) {
           for (const [id, m] of members) if (!prev.has(id)) ctx.chat.appendSystem(`${m.name || 'Someone'} joined`);
-          for (const [id, m] of prev) if (!members.has(id)) ctx.chat.appendSystem(`${m.name || 'Someone'} left`);
+          for (const [id, m] of prev) {
+            if (members.has(id)) continue;
+            ctx.chat.appendSystem(`${m.name || 'Someone'} left`);
+            ctx.playerUi.onPeerGone(id); // drop their position mark
+          }
         }
         seenRoomState = true;
         ctx.chat.setOnlineCount(members.size + 1); // + yourself
@@ -193,8 +197,8 @@ export function createSignaling(ctx) {
         ctx.screen.updateShareButton();
         break;
       case 'sync-load':
-        ctx.controls.setMode('sync');
         ctx.spectate.hide(); // the movie is starting — browsing mirror closes
+        // loadSource switches to the watch view itself once the player exists.
         await ctx.syncMode.handleRemoteLoad(msg.source, nameOf(msg.from));
         break;
       case 'browse':
@@ -202,7 +206,12 @@ export function createSignaling(ctx) {
         ctx.spectate.show(msg.data, nameOf(msg.from));
         break;
       case 'sync':
+        ctx.playerUi.onRemoteSync(msg, nameOf(msg.from)); // "Paused by <name>"
         await ctx.syncCore.applyRemoteSync(msg);
+        break;
+      case 'pos':
+        // Lightweight position beat → peer marks + the in-sync/drift readout.
+        ctx.playerUi.onRemotePos(msg.from, msg, nameOf(msg.from));
         break;
       case 'mic-state':
         ctx.tiles.setMuted(msg.from, !!msg.muted);
@@ -211,7 +220,7 @@ export function createSignaling(ctx) {
         ctx.netstats.setRemoteWeak(msg.from, !!msg.weak);
         break;
       case 'reaction':
-        ctx.reactions.showReaction(msg.emoji); // validated against the preset list inside
+        ctx.reactions.showReaction(msg.emoji, nameOf(msg.from)); // validated against the preset list inside
         break;
       case 'chat':
         ctx.chat.appendMessage(nameOf(msg.from), msg.text);
