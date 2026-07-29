@@ -874,3 +874,13 @@ input[type=range]::-moz-range-thumb{width:9px;height:13px;background:var(--gold)
 /* Dolby that only THIS device can decode — audible here, silent for a viewer
    on a platform without Dolby (Windows Chrome). */
 .s-meta .here-only{color:var(--gold)}
+
+/* "Fix audio" — server-side re-encode for streams this browser can't hear */
+.fix-audio{
+  flex:none;font-size:10.5px;letter-spacing:.04em;color:var(--gold);
+  border:1px solid rgba(228,166,63,.35);border-radius:var(--r-ctl);
+  padding:4px 7px;cursor:pointer;white-space:nowrap;
+  transition:background .2s var(--ease);
+}
+.fix-audio:hover{background:var(--gold-soft)}
+.stream.warned .fix-audio{opacity:1} /* stays legible even on dimmed rows */

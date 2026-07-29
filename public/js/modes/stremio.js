@@ -832,6 +832,27 @@ export function createStremio(ctx) {
 
     row.append(q, meta, play);
     row.addEventListener('click', () => play_(stream, row));
+
+    // Silent here (or audible only on this machine)? Offer the server-side
+    // repair: it decodes Dolby/DTS to AAC and remuxes to MP4 so every device —
+    // including Safari, which can't open .mkv at all — gets picture AND sound.
+    if (f.warn || f.hereOnly) {
+      const fix = document.createElement('span');
+      fix.className = 'fix-audio';
+      fix.setAttribute('role', 'button');
+      fix.tabIndex = 0;
+      fix.textContent = 'Fix audio';
+      fix.title = 'Re-encode the audio to AAC on the server so everyone can hear it (uses your upload bandwidth).';
+      const go = (e) => {
+        e.stopPropagation(); // don't also trigger the row's normal play
+        play_(stream, row, { transcode: true });
+      };
+      fix.addEventListener('click', go);
+      fix.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') go(e);
+      });
+      row.insertBefore(fix, play);
+    }
     return row;
   }
 
@@ -938,7 +959,7 @@ export function createStremio(ctx) {
     return '';
   }
 
-  async function play_(stream, row) {
+  async function play_(stream, row, { transcode = false } = {}) {
     row.disabled = true;
     const q = row.querySelector('.q');
     const was = q ? q.textContent : '';
@@ -959,6 +980,19 @@ export function createStremio(ctx) {
         title: pickerMeta.title,
         resolvedUrl: url,
       };
+      if (transcode) {
+        // A piped fMP4 carries no duration, so probe it first — the scrubber
+        // needs a total to be usable at all.
+        if (q) q.textContent = '⋯';
+        source.transcode = true;
+        try {
+          const r = await fetch(`/api/transcode/probe?url=${encodeURIComponent(url)}`);
+          const j = await r.json();
+          if (j?.duration) source.duration = j.duration;
+        } catch {
+          // no duration — playback still works, the scrubber just shows —:—
+        }
+      }
       const shareAddon = addonToShare();
       if (shareAddon) source.addonUrl = shareAddon;
       rememberMeta(source);

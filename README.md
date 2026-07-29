@@ -190,6 +190,24 @@ to the console.
   (gitignored), with ISO timestamps, close code + reason, room id, and socket
   lifetime — check here first when diagnosing disconnects.
 
+## Fixing audio a browser can't decode
+
+Most debrid releases carry Dolby (AC-3/E-AC-3) or DTS audio, which Chrome and
+Firefox never shipped decoders for, and they usually sit in a `.mkv`, which
+Safari cannot open at all. The stream picker marks those rows and offers
+**Fix audio**, which plays them through:
+
+    GET /api/transcode?url=<stream>&t=<seconds>   -> fragmented MP4
+    GET /api/transcode/probe?url=<stream>         -> { duration, audio, video }
+
+ffmpeg copies the video bitstream untouched and only re-encodes audio to AAC
+(`-c:v copy -c:a aac`), remuxing to fMP4 on the way out — so one pass fixes both
+the codec and the container. Because the video is copied it costs a few percent
+of a core, but it does move the bytes twice (server pulls from the debrid host,
+then pushes to each viewer), so it is opt-in per stream rather than always on.
+`ffmpeg-static` ships the binary; nothing to install. Concurrent transcodes are
+capped, and every URL passes the same SSRF guard as the add-on proxy.
+
 ## Testing that TURN works
 
 Quickest check: open **Settings (gear) → Test relay (TURN)**. It gathers

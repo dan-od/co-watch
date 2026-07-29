@@ -126,19 +126,24 @@ export function createPlayerUi(ctx) {
   // ---- painting ----
   function paint() {
     if (!isNative) return;
-    const v = player()?.el;
+    const p = player();
+    const v = p?.el;
     if (!v) return;
-    const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
-    const pct = dur ? Math.min(100, (v.currentTime / dur) * 100) : 0;
+    // Absolute film position + duration — a transcode starts partway in, and a
+    // piped fMP4 carries no duration of its own, so ask the adapter.
+    const dur = p.getDuration?.() || (Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0);
+    const now = p.getTime?.() ?? v.currentTime;
+    const offset = now - v.currentTime; // 0 unless transcoded
+    const pct = dur ? Math.min(100, (now / dur) * 100) : 0;
     $('fill').style.width = `${pct}%`;
     $('knob').style.left = `${pct}%`;
-    $('cur').textContent = fmt(v.currentTime);
+    $('cur').textContent = fmt(now);
     $('dur').textContent = dur ? fmt(dur) : '—:—';
 
     // buffered head
     let buffered = 0;
     try {
-      if (v.buffered.length) buffered = v.buffered.end(v.buffered.length - 1);
+      if (v.buffered.length) buffered = offset + v.buffered.end(v.buffered.length - 1);
     } catch {}
     $('buf').style.width = dur ? `${Math.min(100, (buffered / dur) * 100)}%` : '0%';
 
@@ -152,7 +157,7 @@ export function createPlayerUi(ctx) {
     $('paused-plate').hidden = !paused;
     if (paused) {
       $('paused-by').textContent = pausedBy ? `Paused by ${pausedBy}` : 'Paused';
-      $('paused-at').textContent = `everyone is holding at ${fmt(v.currentTime)}`;
+      $('paused-at').textContent = `everyone is holding at ${fmt(now)}`;
     }
   }
 
@@ -169,7 +174,7 @@ export function createPlayerUi(ctx) {
       return;
     }
     const now = Date.now();
-    const mine = v.currentTime;
+    const mine = player()?.getTime?.() ?? v.currentTime;
     let worst = null;
     for (const [, p] of peers) {
       const elapsed = p.paused ? 0 : (now - p.at) / 1000;
@@ -187,7 +192,7 @@ export function createPlayerUi(ctx) {
         ? `${worst.name} is ${worst.diff > 0 ? 'behind' : 'ahead'} · ${mag.toFixed(1)}s`
         : `In sync · ±${mag.toFixed(1)}s`;
 
-    const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
+    const dur = player()?.getDuration?.() || (Number.isFinite(v.duration) ? v.duration : 0);
     if (dur) {
       $('peerMark').hidden = false;
       $('peerMark').style.left = `${Math.max(0, Math.min(100, (worst.theirs / dur) * 100))}%`;
@@ -222,11 +227,14 @@ export function createPlayerUi(ctx) {
   });
 
   $('scrub').addEventListener('click', (e) => {
-    const v = isNative ? player()?.el : null;
-    if (!v || !Number.isFinite(v.duration) || v.duration <= 0) return;
+    const p = isNative ? player() : null;
+    const v = p?.el;
+    if (!v) return;
+    const dur = p.getDuration?.() || (Number.isFinite(v.duration) ? v.duration : 0);
+    if (!dur) return;
     const r = e.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    v.currentTime = ratio * v.duration; // 'seeked' reports it to the room
+    p.seek(ratio * dur); // adapter handles the transcode offset + restart
     paint();
   });
 

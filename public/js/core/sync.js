@@ -107,13 +107,32 @@ export function createSync(ctx) {
         player = await createVimeoPlayer(container, source.url, report);
         notice('Vimeo loaded — play/pause/seek stay in sync.', 'ok', 4000);
       } else {
-        const url = source.kind === 'torbox' || source.kind === 'stremio' ? source.resolvedUrl : source.url;
+        const direct = source.kind === 'torbox' || source.kind === 'stremio' ? source.resolvedUrl : source.url;
+        // Audio-repair mode: the server decodes Dolby/DTS to AAC and remuxes to
+        // fMP4 on the fly. The stream starts at `startAt`, so element time 0 is
+        // that offset — the adapter reports absolute time via baseTime.
+        const startAt = Math.max(0, Number(source.startAt) || 0);
+        const url = source.transcode
+          ? `/api/transcode?url=${encodeURIComponent(direct)}${startAt ? `&t=${Math.floor(startAt)}` : ''}`
+          : direct;
         // The <video> element tells us WHY it failed — say that, instead of
         // blaming debrid for everything. Safari in particular cannot play .mkv
         // at ALL (unsupported container), which surfaces as SRC_NOT_SUPPORTED
         // and has nothing to do with the link being locked.
         const onError = (mediaError) => notice(playbackErrorText(source, mediaError), 'error');
-        player = createNativePlayer(container, url, report, onError, () => ($('tap-to-play').hidden = false));
+        player = createNativePlayer(container, url, report, onError, () => ($('tap-to-play').hidden = false), {
+          baseTime: source.transcode ? startAt : 0,
+          duration: source.transcode ? source.duration : 0,
+          // Seeking past the buffered part of a piped transcode means
+          // restarting ffmpeg further in.
+          onSeekOutside: source.transcode
+            ? (t) => {
+                ctx.controls.notice('Jumping — re-encoding from there…', '', 2500);
+                loadSource({ ...source, startAt: t });
+                ctx.signaling.signal({ type: 'sync', action: 'seek', time: t, rate: 1 });
+              }
+            : null,
+        });
         notice('Video loaded — play/pause/seek stay in sync.', 'ok', 4000);
       }
       $('resync').disabled = false;

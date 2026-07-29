@@ -110,18 +110,27 @@ export async function createVimeoPlayer(container, url, report) {
   };
 }
 
-export function createNativePlayer(container, url, report, onError, onAutoplayBlocked) {
+// opts (transcoded playback only):
+//   baseTime — the transcode started at this offset, so element time 0 is
+//              actually baseTime in the film. All reported times are absolute.
+//   duration — probed up-front, because a piped fragmented MP4 has none.
+//   onSeekOutside — the piped stream can only seek inside what's buffered;
+//              anything further has to restart ffmpeg at the new offset.
+export function createNativePlayer(container, url, report, onError, onAutoplayBlocked, opts = {}) {
+  const base = Number(opts.baseTime) || 0;
+  const total = Number(opts.duration) || 0;
   const v = document.createElement('video');
   v.controls = true;
   v.playsInline = true;
   v.src = url;
   container.append(v);
-  v.addEventListener('play', () => report('play', v.currentTime, v.playbackRate));
+  const abs = () => base + v.currentTime; // absolute position in the film
+  v.addEventListener('play', () => report('play', abs(), v.playbackRate));
   v.addEventListener('pause', () => {
-    if (!v.seeking) report('pause', v.currentTime, v.playbackRate);
+    if (!v.seeking) report('pause', abs(), v.playbackRate);
   });
-  v.addEventListener('seeked', () => report('seek', v.currentTime, v.playbackRate));
-  v.addEventListener('ratechange', () => report('seek', v.currentTime, v.playbackRate));
+  v.addEventListener('seeked', () => report('seek', abs(), v.playbackRate));
+  v.addEventListener('ratechange', () => report('seek', abs(), v.playbackRate));
   v.addEventListener('error', () => onError?.(v.error));
 
   // play() returns a promise that REJECTS with AbortError whenever something
@@ -149,9 +158,20 @@ export function createNativePlayer(container, url, report, onError, onAutoplayBl
       }),
     pause: () => queue(() => v.pause()),
     seek: (t) => {
-      v.currentTime = t;
+      const local = t - base;
+      // A piped fragmented MP4 only holds what's been streamed so far. If the
+      // target is outside that, ffmpeg has to be restarted at the new offset.
+      if (opts.onSeekOutside) {
+        let ok = false;
+        for (let i = 0; i < v.seekable.length; i++) {
+          if (local >= v.seekable.start(i) - 0.5 && local <= v.seekable.end(i) + 0.5) ok = true;
+        }
+        if (!ok) return opts.onSeekOutside(Math.max(0, t));
+      }
+      v.currentTime = local;
     },
-    getTime: () => v.currentTime,
+    getTime: () => abs(),
+    getDuration: () => total || (Number.isFinite(v.duration) ? v.duration : 0),
     isPaused: () => v.paused,
     setRate: (r) => {
       v.playbackRate = r;

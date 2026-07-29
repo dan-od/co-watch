@@ -8,6 +8,7 @@
     "start": "node server/server.js"
   },
   "dependencies": {
+    "ffmpeg-static": "^5.3.0",
     "ws": "^8.18.0"
   }
 }
