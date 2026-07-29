@@ -3,7 +3,7 @@
 // (modes/sync.js) drives it, and remote sync events flow through applyRemoteSync.
 
 import { $ } from '../lib/dom.js';
-import { createYouTubePlayer, createVimeoPlayer, createNativePlayer } from './players.js';
+import { createYouTubePlayer, createVimeoPlayer, createNativePlayer, createHlsPlayer } from './players.js';
 
 const SYNC_DRIFT_TOLERANCE = 0.75; // seconds — follower seeks if further off than this
 const SYNC_SUPPRESS_MS = 800; // echo-suppression window after applying a remote sync event
@@ -95,7 +95,6 @@ function playbackErrorText(source, mediaError) {
 export function createSync(ctx) {
   let player = null;
   let suppressUntil = 0;
-  let seekRestart = null; // debounce for transcode restarts (see onSeekOutside)
 
   async function loadSource(source) {
     destroyPlayer();
@@ -115,49 +114,33 @@ export function createSync(ctx) {
         notice('Loading Vimeo…');
         player = await createVimeoPlayer(container, source.url, report);
         notice('Vimeo loaded — play/pause/seek stay in sync.', 'ok', 4000);
+      } else if (source.transcode && source.playlist) {
+        // Repaired playback. The server converted the audio to AAC once, into
+        // segments on disk; this just plays the playlist. Seeking reads a
+        // segment that already exists, so it never reopens the source link —
+        // which is what used to kill a link mid-film.
+        notice('Loading repaired audio…');
+        const onError = (err) => notice(playbackErrorText(source, err), 'error');
+        player = await createHlsPlayer(
+          container,
+          source.playlist,
+          report,
+          onError,
+          () => ($('tap-to-play').hidden = false),
+          { duration: source.duration }
+        );
+        const at = Math.max(0, Number(source.startAt) || 0);
+        if (at > 1) player.seek(at); // switching track mid-film lands where we were
+        notice('Audio repaired — everyone hears it.', 'ok', 4000);
       } else {
         const direct = source.kind === 'torbox' || source.kind === 'stremio' ? source.resolvedUrl : source.url;
-        // Audio-repair mode: the server decodes Dolby/DTS to AAC and remuxes to
-        // fMP4 on the fly. The stream starts at `startAt`, so element time 0 is
-        // that offset — the adapter reports absolute time via baseTime.
-        const startAt = Math.max(0, Number(source.startAt) || 0);
-        let url = direct;
-        if (source.transcode) {
-          const p = new URLSearchParams({ url: direct });
-          if (startAt) p.set('t', String(Math.floor(startAt)));
-          // Which audio track inside the file — picking blindly is how an
-          // "English, Hindi" release ends up playing Hindi.
-          if (Number.isInteger(source.audioIndex) && source.audioIndex >= 0) {
-            p.set('a', String(source.audioIndex));
-          }
-          // Hosts that refuse ffmpeg's own HTTP client get fetched by Node
-          // instead; probe worked out which one this source needs.
-          if (source.via === 'proxy') p.set('via', 'proxy');
-          url = `/api/transcode?${p}`;
-        }
+        const url = direct;
         // The <video> element tells us WHY it failed — say that, instead of
         // blaming debrid for everything. Safari in particular cannot play .mkv
         // at ALL (unsupported container), which surfaces as SRC_NOT_SUPPORTED
         // and has nothing to do with the link being locked.
         const onError = (mediaError) => notice(playbackErrorText(source, mediaError), 'error');
-        player = createNativePlayer(container, url, report, onError, () => ($('tap-to-play').hidden = false), {
-          baseTime: source.transcode ? startAt : 0,
-          duration: source.transcode ? source.duration : 0,
-          // Seeking past the buffered part of a piped transcode means
-          // restarting ffmpeg further in — which reopens the source link.
-          // Debounced, because dragging the scrubber emits a stream of seeks
-          // and each one used to fire its own reconnect at the host.
-          onSeekOutside: source.transcode
-            ? (t) => {
-                clearTimeout(seekRestart);
-                ctx.controls.notice('Jumping — re-encoding from there…', '', 2500);
-                seekRestart = setTimeout(() => {
-                  loadSource({ ...source, startAt: t });
-                  ctx.signaling.signal({ type: 'sync', action: 'seek', time: t, rate: 1 });
-                }, 600);
-              }
-            : null,
-        });
+        player = createNativePlayer(container, url, report, onError, () => ($('tap-to-play').hidden = false));
         notice('Video loaded — play/pause/seek stay in sync.', 'ok', 4000);
       }
       $('resync').disabled = false;
@@ -173,7 +156,6 @@ export function createSync(ctx) {
   }
 
   function destroyPlayer() {
-    clearTimeout(seekRestart);
     if (player) {
       try {
         player.destroy();

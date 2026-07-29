@@ -672,14 +672,32 @@ export function createStremio(ctx) {
     } catch {}
     notice(`Switching audio to ${lang}…`);
 
-    // Same file, different track: re-run the repair from where we are.
+    // Same file, different track: start a session on that track instead. The
+    // source is opened once more here — unavoidable, it's a different
+    // conversion — but only on an explicit choice, not on every seek.
     if (Number.isInteger(opt.trackIndex)) {
-      const source = { ...playing.source, audioIndex: opt.trackIndex, startAt: at };
-      playing = { ...playing, source };
-      await ctx.syncCore.loadSource(source);
-      ctx.signaling.signal({ type: 'sync-load', source });
-      notice(`Audio: ${lang}`, 'ok', 3000);
-      return true;
+      try {
+        const r = await fetch(
+          `/api/hls/start?url=${encodeURIComponent(playing.source.resolvedUrl)}&a=${opt.trackIndex}`
+        );
+        const j = await r.json();
+        if (!j?.success) throw new Error(j?.detail || 'could not switch track');
+        const source = {
+          ...playing.source,
+          audioIndex: opt.trackIndex,
+          playlist: j.playlist,
+          hlsId: j.id,
+          startAt: at,
+        };
+        playing = { ...playing, source };
+        await ctx.syncCore.loadSource(source);
+        ctx.signaling.signal({ type: 'sync-load', source });
+        notice(`Audio: ${lang}`, 'ok', 3000);
+        return true;
+      } catch (err) {
+        notice(`Could not switch audio: ${err.message || err}`, 'error', 5000);
+        return false;
+      }
     }
 
     try {
@@ -1083,27 +1101,27 @@ export function createStremio(ctx) {
         resolvedUrl: url,
       };
       if (transcode) {
-        // A piped fMP4 carries no duration, so probe it first — the scrubber
-        // needs a total to be usable at all.
         if (q) q.textContent = '⋯';
         source.transcode = true;
-        // Probe first. It's the only chance to fail LOUDLY: once we hand the
-        // URL to <video>, an unopenable source just looks like a black screen.
+        // Starting a session converts the audio to AAC into segments on disk
+        // and hands back a playlist. It fails LOUDLY and before we switch view,
+        // which is the only chance to say anything useful — once a player has
+        // the URL, an unopenable source just looks like a black screen.
         try {
-          const askProbe = async (u) =>
-            (await fetch(`/api/transcode/probe?url=${encodeURIComponent(u)}`)).json();
-          let j = await askProbe(url);
+          const askStart = async (u) =>
+            (await fetch(`/api/hls/start?url=${encodeURIComponent(u)}`)).json();
+          let j = await askStart(url);
           // Gone for good? Get a fresh link for the same release and try once
           // more, rather than making the viewer hunt for the reload button.
-          if (j?.ok === false && (j.status === 404 || j.status === 410)) {
+          if (j?.success === false && (j.status === 404 || j.status === 410)) {
             if (q) q.textContent = '↻';
             const fresh = await refreshStream(stream);
             if (fresh?.url) {
               source.resolvedUrl = fresh.url;
-              j = await askProbe(fresh.url);
+              j = await askStart(fresh.url);
             }
           }
-          if (j && j.ok === false) {
+          if (!j || j.success === false) {
             // Remember the provider, so the other rows it serves stop offering
             // a repair that cannot work, and re-draw the list to show that.
             const host = hostOf(source.resolvedUrl);
@@ -1120,18 +1138,22 @@ export function createStremio(ctx) {
             );
             return;
           }
-          if (j?.duration) source.duration = j.duration;
-          if (j?.via === 'proxy') source.via = 'proxy';
-          // Probe reads the real track list out of the file, so we can pick
-          // English rather than whatever happens to be track 0.
-          if (Number.isInteger(j?.audioIndex) && j.audioIndex >= 0) source.audioIndex = j.audioIndex;
-          fileTracks = Array.isArray(j?.tracks) ? j.tracks : [];
-          if (fileTracks.length > 1) {
-            const picked = fileTracks.find((t) => t.index === source.audioIndex);
-            if (picked?.label) notice(`Repairing audio · ${picked.label}`, '', 3000);
+          source.playlist = j.playlist;
+          source.hlsId = j.id;
+          if (j.duration) source.duration = j.duration;
+          // The session read the real track list out of the file, so we can
+          // pick English rather than whatever happens to be track 0.
+          if (Number.isInteger(j.audioIndex) && j.audioIndex >= 0) source.audioIndex = j.audioIndex;
+          fileTracks = Array.isArray(j.tracks) ? j.tracks : [];
+          const picked = fileTracks.find((t) => t.index === source.audioIndex);
+          if (fileTracks.length > 1 && picked?.label) {
+            notice(`Repairing audio · ${picked.label}`, '', 3000);
           }
-        } catch {
-          // no duration — playback still works, the scrubber just shows —:—
+        } catch (err) {
+          // Without a playlist there is nothing to play, so stop here rather
+          // than quietly falling through to the unrepaired link.
+          notice(`Could not start the repair: ${err.message || err}`, 'error', 6000);
+          return;
         }
       }
       const shareAddon = addonToShare();

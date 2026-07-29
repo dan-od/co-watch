@@ -546,4 +546,21 @@ async function handleTranscode(req, res, url) {
   req.on('aborted', cleanup);
 }
 
-module.exports = { handleTranscode };
+// The source-opening machinery here was hard-won — browser-shaped headers, the
+// loopback relay for hosts that refuse ffmpeg, one-connection-per-link claims,
+// honest HTTP status reporting, track parsing. The HLS route needs all of it,
+// so it is shared rather than reimplemented.
+module.exports = {
+  handleTranscode,
+  UA,
+  headerBlock,
+  reach,
+  startRelay,
+  claim,
+  releaseClaim,
+  LinkBusy,
+  reasonFrom,
+  statusText,
+  probe,
+  preferredTrack,
+};

@@ -110,6 +110,122 @@ export async function createVimeoPlayer(container, url, report) {
   };
 }
 
+// HLS playback (the repaired path). Safari plays a playlist natively; everyone
+// else needs hls.js, loaded on demand so the 530KB only costs something when a
+// stream actually gets repaired.
+//
+// The adapter interface is identical to the native one — same `el`, same
+// absolute times — because the playlist starts at zero and stays seekable. All
+// the offset bookkeeping the old pipe needed is simply gone.
+let hlsLibPromise = null;
+function loadHlsLib() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (!hlsLibPromise) {
+    hlsLibPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '/vendor/hls.min.js';
+      s.onload = () => resolve(window.Hls);
+      s.onerror = () => reject(new Error('could not load the HLS player'));
+      document.head.append(s);
+    });
+  }
+  return hlsLibPromise;
+}
+
+export async function createHlsPlayer(container, playlistUrl, report, onError, onAutoplayBlocked, opts = {}) {
+  const v = document.createElement('video');
+  v.controls = true;
+  v.playsInline = true;
+  container.append(v);
+
+  // Prefer hls.js wherever it works, and fall back to the browser's own HLS
+  // only when it doesn't (iOS, which has no MediaSource). Deliberately NOT
+  // decided by canPlayType: Chromium answers "maybe" for a playlist it cannot
+  // actually play, so trusting it hands some browsers a dead <video>. This way
+  // nearly everyone runs the same path, which is one less thing to differ
+  // between two people watching together.
+  let hls = null;
+  let Hls = null;
+  try {
+    Hls = await loadHlsLib();
+  } catch {
+    Hls = null; // library missing — native is the only option left
+  }
+  if (!Hls?.isSupported()) {
+    if (!v.canPlayType('application/vnd.apple.mpegurl')) {
+      throw new Error('this browser cannot play the repaired stream');
+    }
+    v.src = playlistUrl;
+  } else {
+    hls = new Hls({
+      // The playlist grows while ffmpeg works, so keep asking for it.
+      lowLatencyMode: false,
+      backBufferLength: 90,
+    });
+    hls.on(Hls.Events.ERROR, (_e, data) => {
+      // Only fatal errors are worth telling anyone about; hls.js recovers from
+      // the rest by itself, including a segment that isn't written yet.
+      if (data?.fatal) onError?.({ code: 0, hlsType: data.type, hlsDetails: data.details });
+    });
+    hls.loadSource(playlistUrl);
+    hls.attachMedia(v);
+  }
+
+  v.addEventListener('play', () => report('play', v.currentTime, v.playbackRate));
+  v.addEventListener('pause', () => {
+    if (!v.seeking) report('pause', v.currentTime, v.playbackRate);
+  });
+  v.addEventListener('seeked', () => report('seek', v.currentTime, v.playbackRate));
+  v.addEventListener('ratechange', () => report('seek', v.currentTime, v.playbackRate));
+  v.addEventListener('error', () => onError?.(v.error));
+
+  // Same serialisation as the native adapter: a peer's sync can pause us
+  // mid-play, and play() rejects with AbortError when that happens.
+  let pending = Promise.resolve();
+  const queue = (fn) => {
+    pending = pending.then(fn, fn);
+    return pending;
+  };
+
+  return {
+    el: v,
+    play: () =>
+      queue(async () => {
+        try {
+          await v.play();
+        } catch (err) {
+          if (err?.name === 'NotAllowedError') onAutoplayBlocked?.();
+          else if (err?.name !== 'AbortError') console.warn('play failed:', err);
+        }
+      }),
+    pause: () => queue(() => v.pause()),
+    // Seeking reads segments that already exist. Nothing is re-encoded and the
+    // source link is never reopened — which is what used to break it.
+    seek: (t) => {
+      v.currentTime = Math.max(0, t);
+    },
+    getTime: () => v.currentTime,
+    // The playlist only advertises what has been converted so far, so prefer
+    // the real runtime we probed.
+    getDuration: () => Number(opts.duration) || (Number.isFinite(v.duration) ? v.duration : 0),
+    isPaused: () => v.paused,
+    setRate: (r) => {
+      v.playbackRate = r;
+    },
+    setVolume: (x) => {
+      v.volume = Math.max(0, Math.min(1, x));
+    },
+    destroy: () => {
+      v.pause();
+      try {
+        hls?.destroy();
+      } catch {}
+      v.removeAttribute('src');
+      v.remove();
+    },
+  };
+}
+
 // opts (transcoded playback only):
 //   baseTime — the transcode started at this offset, so element time 0 is
 //              actually baseTime in the film. All reported times are absolute.

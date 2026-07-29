@@ -26,6 +26,7 @@ try {
 
 const { handleIceConfig, turnConfigured } = require('./routes/ice-config');
 const { handleTranscode } = require('./routes/transcode');
+const { handleHls, cleanupOnBoot: hlsCleanup, shutdown: hlsShutdown } = require('./routes/hls');
 const { handleTmdbSearch } = require('./routes/tmdb');
 const { handleTorrentSearch } = require('./routes/search');
 const { handleStremio } = require('./routes/stremio');
@@ -43,6 +44,7 @@ const server = http.createServer((req, res) => {
   if (urlPath === '/api/tmdb/search') return handleTmdbSearch(req, res, reqUrl);
   if (urlPath === '/api/search/torrents') return handleTorrentSearch(req, res, reqUrl);
   if (urlPath.startsWith('/api/stremio/')) return handleStremio(req, res, reqUrl);
+  if (urlPath.startsWith('/api/hls')) return handleHls(req, res, reqUrl);
   if (urlPath.startsWith('/api/transcode')) return handleTranscode(req, res, reqUrl);
   if (urlPath === '/ice-config') return handleIceConfig(req, res);
   if (urlPath.startsWith('/torbox/')) return handleTorbox(req, res, urlPath);
@@ -238,6 +240,16 @@ wss.on('connection', (ws, req) => {
     }
   });
 });
+
+// Segment directories outlive a hard kill — clear them before serving, and try
+// to take them with us on the way out.
+hlsCleanup();
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    hlsShutdown();
+    process.exit(0);
+  });
+}
 
 server.listen(PORT, () => {
   const relayed = turnConfigured();
