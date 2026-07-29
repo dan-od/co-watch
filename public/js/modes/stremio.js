@@ -833,16 +833,20 @@ export function createStremio(ctx) {
     row.append(q, meta, play);
     row.addEventListener('click', () => play_(stream, row));
 
-    // Silent here (or audible only on this machine)? Offer the server-side
-    // repair: it decodes Dolby/DTS to AAC and remuxes to MP4 so every device —
-    // including Safari, which can't open .mkv at all — gets picture AND sound.
-    if (f.warn || f.hereOnly) {
+    // Offer the server-side repair on anything not proven to work as-is. It
+    // decodes Dolby/DTS to AAC and remuxes to MP4, so it fixes both the silent
+    // codec AND the .mkv container Safari can't open at all.
+    //
+    // Crucially this includes UNADVERTISED audio (rank 2). Most add-on results
+    // never name their codec, so gating the button on a known-bad codec meant
+    // that on a whole page of releases — the common case — it never appeared.
+    if (f.repair) {
       const fix = document.createElement('span');
       fix.className = 'fix-audio';
       fix.setAttribute('role', 'button');
       fix.tabIndex = 0;
-      fix.textContent = 'Fix audio';
-      fix.title = 'Re-encode the audio to AAC on the server so everyone can hear it (uses your upload bandwidth).';
+      fix.textContent = f.repairLabel;
+      fix.title = f.repairWhy;
       const go = (e) => {
         e.stopPropagation(); // don't also trigger the row's normal play
         play_(stream, row, { transcode: true });
@@ -898,6 +902,7 @@ export function createStremio(ctx) {
       cached: !!stream.url, // debrid-resolved direct links start instantly
       warn: audioRank(stream) === SILENT,
       hereOnly: audioRank(stream) === 1, // Dolby: fine here, silent for some peers
+      ...repairOffer(stream, text),
       src: (stream.description || stream.title || stream.name || 'Stream')
         .split('\n')[0]
         .replace(/\s+/g, ' ')
@@ -946,6 +951,43 @@ export function createStremio(ctx) {
   }
   const SILENT = 3;
 
+  // Safari has no Matroska support at all — container, not codec — so a .mkv
+  // won't open there even when its audio is plain AAC.
+  const isSafari = () =>
+    /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent || '');
+
+  // Should this row offer the server-side repair, and what do we call it?
+  // Only a release we can positively confirm plays here as-is (rank 0, and not
+  // an .mkv on Safari) is left alone.
+  function repairOffer(stream, text) {
+    const rank = audioRank(stream);
+    // The filename usually only appears in the resolved URL or behaviorHints,
+    // not in the human-readable description.
+    const mkv = /\bmkv\b|\.mkv\b/i.test(
+      `${text} ${stream.url || ''} ${stream.behaviorHints?.filename || ''}`
+    );
+    if (mkv && isSafari()) {
+      return {
+        repair: true,
+        repairLabel: 'Fix playback',
+        repairWhy:
+          'Safari cannot open .mkv files. The server repackages this one to MP4 (and converts the audio to AAC) as it plays.',
+      };
+    }
+    if (rank === 0) return { repair: false, repairLabel: '', repairWhy: '' };
+    const why =
+      rank === SILENT
+        ? 'This release’s audio is a codec your browser can’t decode, so it would play silently.'
+        : rank === 1
+          ? 'This plays for you, but stays silent for anyone on Chrome or Firefox.'
+          : 'This release doesn’t say what audio it uses, so it may well play silently.';
+    return {
+      repair: true,
+      repairLabel: 'Fix audio',
+      repairWhy: `${why} The server converts the audio to AAC as it plays, so everyone hears it (uses your upload bandwidth).`,
+    };
+  }
+
   // ---- playback ----
   function addonToShare() {
     const own = getAddonUrl();
@@ -985,9 +1027,15 @@ export function createStremio(ctx) {
         // needs a total to be usable at all.
         if (q) q.textContent = '⋯';
         source.transcode = true;
+        // Probe first. It's the only chance to fail LOUDLY: once we hand the
+        // URL to <video>, an unopenable source just looks like a black screen.
         try {
           const r = await fetch(`/api/transcode/probe?url=${encodeURIComponent(url)}`);
           const j = await r.json();
+          if (j && j.ok === false) {
+            notice(`Can’t repair this stream — ${j.detail || 'the server could not open it'}.`, 'error', 8000);
+            return;
+          }
           if (j?.duration) source.duration = j.duration;
         } catch {
           // no duration — playback still works, the scrubber just shows —:—

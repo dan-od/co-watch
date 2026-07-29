@@ -58,6 +58,14 @@ function playbackErrorText(source, mediaError) {
   const code = mediaError?.code;
   const looksMkv = /\.mkv(\?|$)/i.test(source?.resolvedUrl || source?.url || '') || /\bmkv\b/i.test(source?.name || '');
 
+  // Repaired playback: the browser never sees the original file, so none of the
+  // container/codec advice below applies — the converter is what failed.
+  if (source?.transcode) {
+    return code === 2
+      ? 'The repaired stream stopped part-way — the source link probably expired. Pick the stream again.'
+      : 'The server could not repair this stream (check the server log for “[transcode]”). Try another release, or play it without the repair.';
+  }
+
   if (code === 4 /* SRC_NOT_SUPPORTED */) {
     if (isSafari()) {
       return 'Safari can’t play this file’s container (it has no .mkv support) — pick a different release, ideally one labelled MP4 or WEB-DL, or open the room in Chrome.';
