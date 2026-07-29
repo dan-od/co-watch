@@ -163,5 +163,51 @@ function enterRoom(roomId) {
       return ctx.signaling.isPeerPresent();
     },
     signal: (msg) => ctx.signaling.signal(msg),
+
+    // Relay self-test — run __cowatch.testTurn() in the console ON THE MACHINE
+    // THAT FAILS. It asks the browser to gather RELAY-ONLY candidates using the
+    // exact ICE config the server serves. A `relay` candidate means TURN works;
+    // an empty list with a 401 means the credentials are rejected; an empty
+    // list with no errors means the TURN host was never reachable.
+    async testTurn() {
+      const cfg = await (await fetch('/ice-config')).json();
+      const turns = (cfg.iceServers || []).flatMap((s) => [].concat(s.urls || [])).filter((u) => /^turns?:/i.test(u));
+      const pc = new RTCPeerConnection({ iceServers: cfg.iceServers, iceTransportPolicy: 'relay' });
+      const found = new Set();
+      const errors = [];
+      pc.onicecandidate = (e) => {
+        const m = e.candidate && / typ (\w+)/.exec(e.candidate.candidate);
+        if (m) found.add(m[1]);
+      };
+      pc.onicecandidateerror = (e) =>
+        errors.push(`${e.errorCode} ${e.errorText || ''} ${e.url || ''}`.trim());
+      pc.createDataChannel('probe');
+      await pc.setLocalDescription(await pc.createOffer());
+      await new Promise((done) => {
+        const check = () => pc.iceGatheringState === 'complete' && done();
+        pc.addEventListener('icegatheringstatechange', check);
+        setTimeout(done, 8000); // don't hang if gathering stalls
+        check();
+      });
+      pc.close();
+      const ok = found.has('relay');
+      return {
+        turnServersConfigured: turns,
+        relayCandidateFound: ok,
+        candidateTypes: [...found],
+        iceErrors: errors,
+        verdict: ok
+          ? 'TURN WORKS — the relay allocated a candidate.'
+          : !turns.length
+            ? 'No TURN configured at all — set TURN_* in .env.'
+            : errors.some((e) => /^40[13] /.test(e))
+              ? // 401 = wrong credential, 400 = the server refused the allocation
+                // outright (expired/disabled credential or a spent quota).
+                'TURN REFUSED THE ALLOCATION (400/401) — the credentials are not being accepted. Regenerate them.'
+              : errors.some((e) => e.startsWith('486'))
+                ? 'TURN QUOTA EXHAUSTED (486) — the relay is out of allowance.'
+                : 'No relay candidate and no TURN error — the host was never reached (blocked port, DNS, or wrong URL).',
+      };
+    },
   };
 }
