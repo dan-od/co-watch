@@ -278,8 +278,15 @@ function runFfmpeg(args, href) {
     if (href) await claim(href, entry);
     return await new Promise((resolve) => {
       ff = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      // Keep the HEAD, not the tail. Everything worth parsing — "Duration:",
+      // the input stream list — is printed first, and a release carrying
+      // Dolby Vision RPU notes plus per-track statistics pushed all of it out
+      // of a tail-truncated buffer. That alone made a perfectly reachable file
+      // report "produced nothing".
       let err = '';
-      ff.stderr.on('data', (d) => (err = (err + d).slice(-8000)));
+      ff.stderr.on('data', (d) => {
+        if (err.length < 262144) err += d;
+      });
       const finish = (text) => {
         settle();
         if (href) releaseClaim(href, entry);
