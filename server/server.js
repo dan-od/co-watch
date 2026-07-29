@@ -12,16 +12,20 @@ const { WebSocketServer } = require('ws');
 const ROOT = path.join(__dirname, '..');
 
 // Load .env (simple KEY=VALUE lines) without a dependency. Real env vars win.
-try {
-  const envText = fs.readFileSync(path.join(ROOT, '.env'), 'utf8');
-  for (const line of envText.split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
-    if (m && !line.trimStart().startsWith('#') && !(m[1] in process.env)) {
-      process.env[m[1]] = m[2];
+// COWATCH_ENV_FILE lets the desktop app keep its settings next to its data
+// rather than inside a read-only application bundle.
+for (const envPath of [process.env.COWATCH_ENV_FILE, path.join(ROOT, '.env')].filter(Boolean)) {
+  try {
+    const envText = fs.readFileSync(envPath, 'utf8');
+    for (const line of envText.split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (m && !line.trimStart().startsWith('#') && !(m[1] in process.env)) {
+        process.env[m[1]] = m[2];
+      }
     }
+  } catch {
+    // missing or unreadable — the next candidate, else STUN-only
   }
-} catch {
-  // no .env — fine, run STUN-only
 }
 
 const { handleIceConfig, turnConfigured } = require('./routes/ice-config');
@@ -54,7 +58,9 @@ const server = http.createServer((req, res) => {
 // --- Connection log (Phase 5) ------------------------------------------------
 // One JSON line per event, appended to logs/connections.log.
 
-const LOG_DIR = path.join(ROOT, 'logs');
+// Overridable because a packaged app cannot write inside its own bundle — the
+// desktop shell points this at the OS user-data directory.
+const LOG_DIR = process.env.COWATCH_LOG_DIR || path.join(ROOT, 'logs');
 fs.mkdirSync(LOG_DIR, { recursive: true });
 const logStream = fs.createWriteStream(path.join(LOG_DIR, 'connections.log'), { flags: 'a' });
 
@@ -251,17 +257,45 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-server.listen(PORT, () => {
-  const relayed = turnConfigured();
-  const forceRelay = /^(1|true|yes)$/i.test(process.env.FORCE_RELAY || '');
-  const via = (process.env.TURN_API_URL || '').trim() ? 'auto-refreshed from the provider API' : 'static credentials';
-  console.log(`CoWatch listening on http://localhost:${PORT}`);
-  console.log(`TURN: ${relayed ? `configured (${via})` : 'not configured (STUN-only)'}`);
-  if (forceRelay) {
-    console.log(
-      relayed
-        ? 'FORCE_RELAY is ON — all media will go through TURN (testing mode).'
-        : 'WARNING: FORCE_RELAY is ON but no TURN is configured — connections WILL fail.'
-    );
-  }
-});
+// Started by `npm start` on a fixed port, or by the desktop app on an ephemeral
+// one. In the app every viewer runs this locally, which is the point: stream
+// resolution and audio repair then happen on the machine the debrid link was
+// issued to, instead of on a server the host refuses to serve.
+// host: unchanged for `npm start` (every interface, so a tunnel or another
+// device on the LAN can reach it). The desktop app passes 127.0.0.1, because
+// its server is for itself alone.
+function start({ port = PORT, host = process.env.HOST } = {}) {
+  return new Promise((resolve) => {
+    server.listen(port, host, () => {
+      const actual = server.address().port;
+      const relayed = turnConfigured();
+      const forceRelay = /^(1|true|yes)$/i.test(process.env.FORCE_RELAY || '');
+      const via = (process.env.TURN_API_URL || '').trim()
+        ? 'auto-refreshed from the provider API'
+        : 'static credentials';
+      console.log(`CoWatch listening on http://localhost:${actual}`);
+      console.log(`TURN: ${relayed ? `configured (${via})` : 'not configured (STUN-only)'}`);
+      if (forceRelay) {
+        console.log(
+          relayed
+            ? 'FORCE_RELAY is ON — all media will go through TURN (testing mode).'
+            : 'WARNING: FORCE_RELAY is ON but no TURN is configured — connections WILL fail.'
+        );
+      }
+      resolve({ port: actual, server });
+    });
+  });
+}
+
+function stop() {
+  hlsShutdown();
+  try {
+    server.close();
+  } catch {}
+}
+
+// Run directly (`npm start`) → listen straight away. Required as a module (the
+// desktop app) → the caller decides when and on which port.
+if (require.main === module) start();
+
+module.exports = { start, stop, app: server };

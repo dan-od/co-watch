@@ -22,7 +22,24 @@ export function createSignaling(ctx) {
   // The socket can idle out (Cloudflare tunnel) or drop on a network blip.
   // Reconnect with exponential backoff (1s,2s,4s,8s… cap 15s), rejoin the same
   // room, and resume. Only the Leave button (or room-full) stops retrying.
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  // Where the room lives. In the browser that is wherever the page came from.
+  // In the desktop app the page is served by a local server on 127.0.0.1, which
+  // no friend can reach — so the room has to be somewhere shared, and the shell
+  // supplies it. Everything ELSE (stream lookup, audio repair) deliberately
+  // stays local: that is what makes debrid links work, since they are issued to
+  // the viewer's own machine.
+  const signalingBase = () => {
+    const configured = window.__cowatchSignaling;
+    if (configured) {
+      try {
+        const u = new URL(configured);
+        return `${u.protocol === 'https:' ? 'wss' : 'ws'}://${u.host}`;
+      } catch {
+        // malformed setting — fall through to this origin
+      }
+    }
+    return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+  };
   let ws = null;
   let leaving = false;
   let reconnectAttempts = 0;
@@ -36,7 +53,7 @@ export function createSignaling(ctx) {
 
   function connectWs() {
     reconnectTimer = null;
-    ws = new WebSocket(`${proto}://${location.host}`);
+    ws = new WebSocket(signalingBase());
 
     ws.addEventListener('open', () => {
       reconnectAttempts = 0;

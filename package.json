@@ -3,13 +3,50 @@
   "version": "0.1.0",
   "private": true,
   "description": "Watch-together app for up to six people: WebRTC mesh with a tiny WebSocket signaling server.",
-  "main": "server/server.js",
+  "main": "desktop/main.js",
   "scripts": {
-    "start": "node server/server.js"
+    "start": "node server/server.js",
+    "app": "electron .",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac"
   },
   "dependencies": {
     "ffmpeg-static": "^5.3.0",
     "hls.js": "^1.6.16",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "app.cowatch.desktop",
+    "productName": "CoWatch",
+    "files": [
+      "desktop/**",
+      "server/**",
+      "public/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.entertainment"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    }
   }
 }

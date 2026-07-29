@@ -39,6 +39,21 @@ if ('serviceWorker' in navigator) {
 
 const roomMatch = location.pathname.match(/^\/r\/([\w-]{4,64})$/);
 
+// In the desktop app the page is served by a server on this machine, which
+// nobody else can reach — so the room lives at an address the shell remembers.
+// Read it BEFORE anything opens a socket. Media is never involved: each copy
+// fetches and repairs streams locally, which is the whole reason the app exists.
+await (async () => {
+  const desktop = window.__cowatchDesktop;
+  if (!desktop) return;
+  try {
+    const { signaling } = (await desktop.getSettings()) || {};
+    if (signaling) window.__cowatchSignaling = signaling;
+  } catch {
+    // fall back to this origin — rooms then work on this machine only
+  }
+})();
+
 if (roomMatch) {
   enterRoom(roomMatch[1]);
 } else {
