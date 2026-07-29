@@ -884,3 +884,10 @@ input[type=range]::-moz-range-thumb{width:9px;height:13px;background:var(--gold)
 }
 .fix-audio:hover{background:var(--gold-soft)}
 .stream.warned .fix-audio{opacity:1} /* stays legible even on dimmed rows */
+/* Provider already refused this server — present, but plainly not a button. */
+.fix-audio.dead{
+  color:var(--dim);border-color:var(--hair);cursor:default;
+  text-decoration:line-through;text-decoration-thickness:1px;
+}
+.fix-audio.dead:hover{background:none}
+.stream.warned .fix-audio.dead{opacity:.75}

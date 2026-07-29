@@ -574,6 +574,16 @@ export function createStremio(ctx) {
 
   // ---- stream picker (drawer) ----
   let pickerMeta = null;
+  // Hosts that have already refused this server a link. Per-session only —
+  // these are provider-level facts that can change.
+  const repairBlockedHosts = new Set();
+  const hostOf = (u) => {
+    try {
+      return new URL(u).host;
+    } catch {
+      return '';
+    }
+  };
   // What's on screen right now, so the CC panel can offer other audio options.
   let playing = null; // { streams, meta, streamKey }
 
@@ -611,7 +621,9 @@ export function createStremio(ctx) {
         options: playing.fileTracks.map((t) => {
           // switchAudio finds an option by its label, so two Japanese tracks
           // have to end up with different names or the second is unreachable.
-          const base = t.label || t.lang || `Track ${t.index}`;
+          // An untagged track has no label at all (the server refuses to write
+          // out "und") — call it what it is rather than showing a code.
+          const base = t.label || `Track ${t.index}`;
           const n = (seen.get(base) || 0) + 1;
           seen.set(base, n);
           return {
@@ -878,6 +890,18 @@ export function createStremio(ctx) {
     if (f.repair) {
       const fix = document.createElement('span');
       fix.className = 'fix-audio';
+      // A host that already refused the server will refuse every other link it
+      // serves, so stop inviting clicks that cannot work. Rows from OTHER
+      // providers for the same title are unaffected — that's the useful signal.
+      const blocked = repairBlockedHosts.has(hostOf(stream.url));
+      if (blocked) {
+        fix.classList.add('dead');
+        fix.textContent = 'no repair';
+        fix.title = `${hostOf(stream.url)} will not serve this server, so the audio can’t be converted. Try a release from a different provider, or press ▶ to play it as-is.`;
+        row.append(fix);
+        row.append(play);
+        return row;
+      }
       fix.setAttribute('role', 'button');
       fix.tabIndex = 0;
       fix.textContent = f.repairLabel;
@@ -1080,6 +1104,13 @@ export function createStremio(ctx) {
             }
           }
           if (j && j.ok === false) {
+            // Remember the provider, so the other rows it serves stop offering
+            // a repair that cannot work, and re-draw the list to show that.
+            const host = hostOf(source.resolvedUrl);
+            if (host) {
+              repairBlockedHosts.add(host);
+              if (pickerMeta?.streams) renderPicker(pickerMeta.streams);
+            }
             // ▶ still works: the browser may well be able to fetch a link the
             // server can't, it just won't have sound.
             notice(
