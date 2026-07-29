@@ -752,10 +752,28 @@ input[type=range]::-moz-range-thumb{width:9px;height:13px;background:var(--gold)
 .pill:disabled{opacity:.45;cursor:default}
 .pill:disabled:hover{color:var(--dim);border-color:var(--hair);background:none}
 .pill.on,.pill.active{color:var(--gold);border-color:rgba(228,166,63,.4);background:var(--gold-soft)}
-.pill.off{color:var(--dim);background:var(--panel)}
+/* Mic/camera read as LIVE by default; .off must be unmistakably different —
+   as plain .pill they looked identical to their own on-state (both --dim),
+   so toggling appeared to do nothing. */
+.icon-pill{color:var(--text)}
+.pill.off{
+  color:var(--danger);
+  border-color:rgba(203,90,62,.45);
+  background:rgba(203,90,62,.12);
+}
+.pill.off:hover{color:var(--danger);border-color:var(--danger);background:rgba(203,90,62,.2)}
+.pill.off::after{
+  content:'';position:absolute;left:50%;top:50%;width:20px;height:1.5px;
+  background:currentColor;transform:translate(-50%,-50%) rotate(-45deg);
+  border-radius:2px;pointer-events:none;
+}
+.icon-pill{position:relative}
 .pill.leave{color:var(--danger);border-color:rgba(203,90,62,.35)}
 .pill.leave:hover{background:rgba(203,90,62,.12);color:var(--danger)}
 .pill.speaking,.pill.talking{color:var(--ok);border-color:rgba(157,180,119,.45);background:rgba(157,180,119,.12)}
+/* Hold-to-talk only exists once push-to-talk is armed (ptt.js adds .visible) */
+#ptt-hold{display:none}
+#ptt-hold.visible{display:inline-flex}
 .icon-pill{width:34px;padding:0;justify-content:center}
 .pill .dot{width:6px;height:6px;box-shadow:none}
 

@@ -59,6 +59,12 @@ export async function tuneSender(sender, { maxBitrate, priority, degradationPref
 
 export function createMedia(ctx) {
   const iceConfigPromise = fetchIceConfig();
+  let turnOffered = false; // did the server actually hand us a TURN server?
+  iceConfigPromise.then(({ iceServers }) => {
+    turnOffered = (iceServers || []).some((s) =>
+      [].concat(s.urls || []).some((u) => /^turns?:/i.test(u))
+    );
+  });
   let localStream = null;
   const peers = new Map(); // peerId → { pc, polite, makingOffer, ignoreOffer, iceRestartTimer, goneTimer }
 
@@ -202,7 +208,20 @@ export function createMedia(ctx) {
         removePeer(peerId); // nobody to restart with — wait for a rejoin
         return;
       }
-      setStatus('Restarting a media connection…', 'warn');
+      rec.iceRestarts = (rec.iceRestarts || 0) + 1;
+      // Repeated failures across different networks almost always mean the
+      // relay isn't usable (bad/expired TURN credentials or a spent quota) —
+      // say that instead of looping on a vague "restarting…".
+      if (rec.iceRestarts >= 2) {
+        setStatus(
+          turnOffered
+            ? 'Cannot reach this person — the TURN relay is not working (check its credentials/quota).'
+            : 'Cannot reach this person — no TURN relay is configured, so different networks cannot connect.',
+          'error'
+        );
+      } else {
+        setStatus('Restarting a media connection…', 'warn');
+      }
       try {
         cur.pc.restartIce();
       } catch (err) {
