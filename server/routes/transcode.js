@@ -34,30 +34,56 @@ let active = 0;
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
-// Turn ffmpeg's stderr into one line worth showing a human.
+// Browser-shaped request headers. The bare defaults (ffmpeg sends an odd
+// Icy-MetaData header and nothing else) are easy for a CDN's bot filter to
+// spot, and some hosts answer them with 403 while serving the identical URL to
+// Chrome. This doesn't beat TLS-fingerprint filtering, but it clears the simple
+// header checks. Referer is set per-request to the URL's own origin.
+function httpHeaders(u) {
+  return [
+    'Accept: */*',
+    'Accept-Language: en-US,en;q=0.9',
+    `Referer: ${u.origin}/`,
+    'Sec-Fetch-Dest: video',
+    'Sec-Fetch-Mode: no-cors',
+    'Sec-Fetch-Site: cross-site',
+    '',
+  ].join('\r\n');
+}
+
+// Turn ffmpeg's stderr into something worth showing a human. Returns the HTTP
+// status when there was one, so the caller can say what actually happened
+// rather than guess at a cause.
 function reasonFrom(stderr) {
   const lines = String(stderr || '')
     .split(/\r?\n/)
     .map((l) => l.replace(/^\[[^\]]+\]\s*/, '').trim())
     .filter(Boolean);
-  const http = lines.find((l) => /HTTP error|Server returned|403|404|410/i.test(l));
-  if (http) {
-    if (/40[34]|410/.test(http)) {
-      return 'the source refused the request (debrid links expire and are tied to the account and IP that made them) — pick the stream again';
-    }
-    return http;
+  const http = lines.find((l) => /HTTP error|Server returned/i.test(l));
+  const status = Number(http?.match(/\b(\d{3})\b/)?.[1]) || 0;
+  if (status === 403 || status === 401) {
+    return {
+      status,
+      text: `the host refused the server’s request (HTTP ${status}) even though your browser can reach the same link — it is either tied to your device or blocking non-browser clients. Try a different release`,
+    };
   }
-  const open = lines.find((l) => /Error opening input|Invalid data found|Protocol not found/i.test(l));
-  if (open) return open;
-  return lines[lines.length - 1] || '';
+  if (status === 404 || status === 410) {
+    return {
+      status,
+      text: `the link is gone (HTTP ${status}) — these expire, so close and reopen the stream list to get a fresh one`,
+    };
+  }
+  if (status) return { status, text: `the host answered HTTP ${status}` };
+  const open = lines.find((l) => /Error opening input|Invalid data found|Protocol not found|Connection|timed out/i.test(l));
+  return { status: 0, text: open || lines[lines.length - 1] || '' };
 }
 
 // Read just the container header to learn duration + stream layout.
-function probe(url) {
+function probe(u) {
   return new Promise((resolve) => {
     execFile(
       ffmpegPath,
-      ['-hide_banner', '-user_agent', UA, '-i', url, '-t', '0.1', '-f', 'null', '-'],
+      ['-hide_banner', '-user_agent', UA, '-headers', httpHeaders(u), '-i', u.href, '-t', '0.1', '-f', 'null', '-'],
       { timeout: 20000, maxBuffer: 1 << 22 },
       (err, _stdout, stderr) => {
         // ffmpeg always reports the metadata we want on stderr, and exits
@@ -67,14 +93,21 @@ function probe(url) {
         const audio = text.match(/Stream #\d+:\d+.*: Audio: ([a-z0-9_]+)/i);
         const video = text.match(/Stream #\d+:\d+.*: Video: ([a-z0-9_]+)/i);
         const ok = !!dur;
+        const why = ok ? { status: 0, text: '' } : reasonFrom(text);
+        if (!ok) {
+          // Full stderr to the log — the one-liner the viewer sees is
+          // deliberately short, but diagnosing a picky host needs the rest.
+          console.warn(`[transcode] probe failed for ${u.host} (HTTP ${why.status || '—'}):\n${text.trim().slice(-800)}`);
+        }
         resolve({
           duration: ok ? Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3]) : 0,
           audio: audio ? audio[1] : '',
           video: video ? video[1] : '',
           ok,
+          status: why.status,
           // Why it failed, so the client can say something true instead of
           // dropping the viewer into a black screen.
-          detail: ok ? '' : reasonFrom(text),
+          detail: why.text,
         });
       }
     );
@@ -93,7 +126,7 @@ async function handleTranscode(req, res, url) {
   }
   let safe;
   try {
-    safe = (await assertPublicUrl(target)).href; // same guard as the add-on proxy
+    safe = await assertPublicUrl(target); // same guard as the add-on proxy
   } catch (err) {
     sendJson(res, 400, { success: false, detail: err.message || 'blocked URL' });
     return;
@@ -114,13 +147,14 @@ async function handleTranscode(req, res, url) {
     '-hide_banner',
     '-loglevel', 'error',
     '-user_agent', UA,
+    '-headers', httpHeaders(safe),
     '-reconnect', '1', // debrid hosts drop idle connections
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '5',
   ];
   if (start > 0) args.push('-ss', String(start)); // fast seek, before -i
   args.push(
-    '-i', safe,
+    '-i', safe.href,
     '-map', '0:v:0',
     '-map', '0:a:0?',
     '-c:v', 'copy', // never re-encode video — that's what keeps this cheap
@@ -198,10 +232,10 @@ async function handleTranscode(req, res, url) {
   ff.on('close', (code) => {
     const reason = reasonFrom(errTail);
     if (code && code !== 255 && errTail.trim()) {
-      console.warn(`[transcode] ffmpeg exited ${code}: ${errTail.trim().slice(0, 300)}`);
+      console.warn(`[transcode] ffmpeg exited ${code} for ${safe.host}:\n${errTail.trim().slice(-800)}`);
     }
     cleanup();
-    if (!headersSent) fail(502, reason || 'the converter produced no output for this source');
+    if (!headersSent) fail(502, reason.text || 'the converter produced no output for this source');
     else res.end();
   });
   // Viewer closed the tab / seeked / switched stream.

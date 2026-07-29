@@ -1033,7 +1033,13 @@ export function createStremio(ctx) {
           const r = await fetch(`/api/transcode/probe?url=${encodeURIComponent(url)}`);
           const j = await r.json();
           if (j && j.ok === false) {
-            notice(`Can’t repair this stream — ${j.detail || 'the server could not open it'}.`, 'error', 8000);
+            // ▶ still works: the browser may well be able to fetch a link the
+            // server can't, it just won't have sound.
+            notice(
+              `Can’t repair this one — ${j.detail || 'the server could not open it'}. Press ▶ to play it unrepaired.`,
+              'error',
+              9000
+            );
             return;
           }
           if (j?.duration) source.duration = j.duration;
