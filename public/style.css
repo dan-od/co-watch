@@ -92,6 +92,17 @@ button{background:none;border:0;cursor:pointer}
 #landing .wordmark{font-size:30px;letter-spacing:.16em}
 #landing p{color:var(--dim);max-width:42ch;font-size:13.5px;line-height:1.7}
 #landing .btn{height:40px;padding:0 22px;font-size:14px}
+#landing .join{display:flex;gap:8px;align-items:center;margin-top:2px}
+#landing .join input{
+  height:36px;width:230px;padding:0 11px;font:inherit;font-size:13px;
+  color:var(--text);background:var(--panel-2);
+  border:1px solid var(--hair);border-radius:var(--r-ctl);
+}
+#landing .join input::placeholder{color:var(--dim)}
+#landing .join input:focus{outline:none;border-color:rgba(228,166,63,.45)}
+#landing .join .btn{height:36px;padding:0 16px;font-size:13px}
+.btn.ghost{background:none;color:var(--dim);border:1px solid var(--hair)}
+.btn.ghost:hover{color:var(--text);border-color:rgba(238,228,208,.22)}
 
 /* ============================================================
    Shell

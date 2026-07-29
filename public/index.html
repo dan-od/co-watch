@@ -20,8 +20,15 @@
   <!-- Landing view -->
   <section id="landing" hidden>
     <span class="wordmark">Co<b>Watch</b></span>
-    <p>Watch something together. Create a room and send the link to up to five friends.</p>
+    <p id="landing-blurb">Watch something together. Create a room and send the link to up to five friends.</p>
     <button id="create-room" class="btn">Create room</button>
+    <!-- Joining needs its own way in. In the desktop app a room link points at
+         127.0.0.1 on a port that differs per machine, so a code is the only
+         thing that can actually be passed to a friend. -->
+    <div class="join">
+      <input id="join-code" placeholder="or enter a room code" autocomplete="off" spellcheck="false" aria-label="Room code">
+      <button id="join-room" class="btn ghost">Join</button>
+    </div>
   </section>
 
   <!-- Room: fixed window — topbar / body(stage + chat) / control bar -->

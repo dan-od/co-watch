@@ -9,6 +9,10 @@ contextBridge.exposeInMainWorld('__cowatchDesktop', {
   platform: process.platform,
   getSettings: () => ipcRenderer.invoke('cowatch:get-settings'),
   setSignaling: (value) => ipcRenderer.invoke('cowatch:set-signaling', value),
+  // navigator.clipboard needs the document focused and silently rejects when it
+  // isn't — measured. Copy is how the room code reaches a friend, so it goes
+  // through Electron's clipboard, which always works.
+  copy: (text) => ipcRenderer.invoke('cowatch:copy', String(text ?? '')),
   // Called from the Room menu. A prompt is enough for one address, and keeps
   // the shell from needing a settings window of its own.
   promptSignaling: async (current) => {

@@ -65,6 +65,28 @@ function showLanding() {
   $('create-room').addEventListener('click', () => {
     location.href = `/r/${randomRoomId()}`;
   });
+
+  // Accept either a bare code or a whole pasted link — people will paste
+  // whatever they were sent, and the tail of any room URL is the code.
+  const join = () => {
+    const raw = $('join-code').value.trim();
+    const code = (raw.match(/\/r\/([\w-]{4,64})/) || [, raw])[1] || '';
+    if (!/^[\w-]{4,64}$/.test(code)) {
+      $('join-code').focus();
+      $('join-code').select();
+      return;
+    }
+    location.href = `/r/${code}`;
+  };
+  $('join-room').addEventListener('click', join);
+  $('join-code').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') join();
+  });
+
+  if (window.__cowatchDesktop) {
+    $('landing-blurb').textContent =
+      'Watch something together. Create a room and send the code to up to five friends — everyone needs CoWatch open and the same room server set.';
+  }
 }
 
 function randomRoomId() {
@@ -89,7 +111,15 @@ function getDisplayName() {
 
 function enterRoom(roomId) {
   $('room').hidden = false;
-  $('room-link').value = location.href;
+  // In the app, this URL is 127.0.0.1 on a port that is different on every
+  // machine and every launch — worthless to a friend. The room CODE is the
+  // thing that travels, so that is what gets shown and copied.
+  if (window.__cowatchDesktop) {
+    $('room-link').value = roomId;
+    $('room-link').title = 'Room code — send this to your friends';
+  } else {
+    $('room-link').value = location.href;
+  }
 
   // Shared context hub. Siblings call across it at runtime (ctx.media.getPcs(),
   // ctx.controls.notice(), …). ctx.els are the chat nodes the Document PiP

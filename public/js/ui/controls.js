@@ -22,8 +22,14 @@ export function createControls(ctx) {
   let lastMicSent = null; // broadcast mic-state only on change
 
   $('copy-link').addEventListener('click', async () => {
+    // Whatever the field is showing — a URL in the browser, a room code in the
+    // desktop app, where the URL points at this machine's own port.
+    const text = $('room-link').value || location.href;
     try {
-      await navigator.clipboard.writeText(location.href);
+      // In the app, go through the shell: navigator.clipboard needs the
+      // document focused and rejects silently when it isn't.
+      if (window.__cowatchDesktop?.copy) await window.__cowatchDesktop.copy(text);
+      else await navigator.clipboard.writeText(text);
       $('copy-link').textContent = 'Copied';
       setTimeout(() => ($('copy-link').textContent = 'Copy'), 1500);
     } catch {

@@ -15,7 +15,7 @@
 // still needs one address everybody can reach, so the shell injects it and the
 // client uses it for the WebSocket only. Media never goes through it.
 
-const { app, BrowserWindow, shell, dialog, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, shell, dialog, Menu, ipcMain, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -155,6 +155,10 @@ async function askForSignaling() {
   );
 }
 
+ipcMain.handle('cowatch:copy', (_e, text) => {
+  clipboard.writeText(String(text ?? ''));
+  return true;
+});
 ipcMain.handle('cowatch:get-settings', () => readSettings());
 ipcMain.handle('cowatch:set-signaling', (_e, value) => {
   const next = { ...readSettings(), signaling: String(value || '').trim() };
