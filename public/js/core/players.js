@@ -123,10 +123,31 @@ export function createNativePlayer(container, url, report, onError, onAutoplayBl
   v.addEventListener('seeked', () => report('seek', v.currentTime, v.playbackRate));
   v.addEventListener('ratechange', () => report('seek', v.currentTime, v.playbackRate));
   v.addEventListener('error', () => onError?.(v.error));
+
+  // play() returns a promise that REJECTS with AbortError whenever something
+  // pauses before it settles — which happens constantly here, because a peer's
+  // sync message can pause us mid-play. Treating every rejection as "autoplay
+  // blocked" made the button look dead until you clicked it 2–3 times. Only a
+  // real NotAllowedError is an autoplay block; serialise the calls so our own
+  // play/pause can't fight each other either.
+  let pending = Promise.resolve();
+  const queue = (fn) => {
+    pending = pending.then(fn, fn);
+    return pending;
+  };
+
   return {
     el: v,
-    play: () => v.play().catch(() => onAutoplayBlocked?.()),
-    pause: () => v.pause(),
+    play: () =>
+      queue(async () => {
+        try {
+          await v.play();
+        } catch (err) {
+          if (err?.name === 'NotAllowedError') onAutoplayBlocked?.();
+          else if (err?.name !== 'AbortError') console.warn('play failed:', err);
+        }
+      }),
+    pause: () => queue(() => v.pause()),
     seek: (t) => {
       v.currentTime = t;
     },

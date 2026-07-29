@@ -47,6 +47,43 @@ export function detectSource(raw) {
   return { kind: 'unsupported' };
 }
 
+// Safari can't play the Matroska (.mkv) container at all — no codec setting
+// changes that. Most debrid releases are .mkv, so this is a very common
+// "the video just doesn't load" on a Mac.
+const isSafari = () =>
+  typeof navigator !== 'undefined' &&
+  /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent || '');
+
+function playbackErrorText(source, mediaError) {
+  const code = mediaError?.code;
+  const looksMkv = /\.mkv(\?|$)/i.test(source?.resolvedUrl || source?.url || '') || /\bmkv\b/i.test(source?.name || '');
+
+  if (code === 4 /* SRC_NOT_SUPPORTED */) {
+    if (isSafari()) {
+      return 'Safari can’t play this file’s container (it has no .mkv support) — pick a different release, ideally one labelled MP4 or WEB-DL, or open the room in Chrome.';
+    }
+    return looksMkv
+      ? 'This browser can’t play this release’s container/codec — try another stream for the same title.'
+      : 'This browser can’t play this stream’s format — try another stream for the same title.';
+  }
+  if (code === 3 /* DECODE */) {
+    return 'The video started but the codec failed to decode here — pick a different release (a plain H.264 / WEB-DL usually works).';
+  }
+  if (code === 2 /* NETWORK */) {
+    return source?.kind === 'stremio' || source?.kind === 'torbox'
+      ? 'The stream link stopped responding. Debrid links expire and are tied to the account that created them — open the picker and choose the stream again to get a fresh link.'
+      : 'The stream link stopped responding — the host may block cross-site playback (CORS).';
+  }
+  // No MediaError (or aborted): fall back to the source-specific hint.
+  if (source?.kind === 'torbox') {
+    return 'This link requires your own TorBox account — paste the same magnet after adding your key.';
+  }
+  if (source?.kind === 'stremio') {
+    return 'That stream would not play here — debrid links are usually locked to the account that made them. Pick the stream again, or load your own add-on in the Stremio tab.';
+  }
+  return 'Could not load this video — the host may block cross-site playback (CORS) or the format is unsupported.';
+}
+
 export function createSync(ctx) {
   let player = null;
   let suppressUntil = 0;
@@ -71,18 +108,11 @@ export function createSync(ctx) {
         notice('Vimeo loaded — play/pause/seek stay in sync.', 'ok', 4000);
       } else {
         const url = source.kind === 'torbox' || source.kind === 'stremio' ? source.resolvedUrl : source.url;
-        const onError = () =>
-          notice(
-            source.kind === 'torbox'
-              ? 'This link requires your own TorBox account — paste the same magnet after adding your key.'
-              : source.kind === 'stremio'
-                ? // Debrid links are tied to the sharer's account/IP, so a followed
-                  // URL often dies on someone else's machine. Name that, and point
-                  // at the Stremio TAB (it stopped living under Sync).
-                  'That stream would not play here — debrid links are usually locked to the sharer’s account. Open the Stremio tab and load your own add-on to resolve it yourself.'
-                : 'Could not load this video — the host may block cross-site playback (CORS) or the format is unsupported.',
-            'error'
-          );
+        // The <video> element tells us WHY it failed — say that, instead of
+        // blaming debrid for everything. Safari in particular cannot play .mkv
+        // at ALL (unsupported container), which surfaces as SRC_NOT_SUPPORTED
+        // and has nothing to do with the link being locked.
+        const onError = (mediaError) => notice(playbackErrorText(source, mediaError), 'error');
         player = createNativePlayer(container, url, report, onError, () => ($('tap-to-play').hidden = false));
         notice('Video loaded — play/pause/seek stay in sync.', 'ok', 4000);
       }
