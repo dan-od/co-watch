@@ -145,17 +145,62 @@ export function createTracks(ctx) {
       p.textContent = text;
       audioList.append(p);
     };
-    if (!at) {
-      hint("This browser doesn't expose embedded audio tracks (Safari does; Chrome hides them).");
-    } else if (at.length <= 1) {
-      hint('Only one audio track in this video.');
-    } else {
+
+    // Best case (Safari): the element exposes real embedded tracks — switch
+    // them in place.
+    if (at && at.length > 1) {
       for (let i = 0; i < at.length; i++) {
         audioList.append(
           radioRow('audio', at[i].label || at[i].language || `Track ${i + 1}`, at[i].enabled, () => selectAudio(i))
         );
       }
+      return;
     }
+
+    // Chrome/Firefox hide embedded tracks, so offer the other language
+    // RELEASES of this title instead — picking one reloads at the same spot.
+    const opts = ctx.stremio?.getAudioOptions?.() || [];
+    if (opts.length > 1) {
+      for (const o of opts) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'sub';
+        row.setAttribute('aria-selected', String(!!o.current));
+        row.textContent = o.lang;
+        const tag = document.createElement('span');
+        if (o.warn) {
+          tag.className = 'warn';
+          tag.textContent = '⚠ no sound here';
+        } else {
+          tag.className = 'tag';
+          tag.textContent = [o.q, o.audio].filter(Boolean).join(' · ') || 'audio';
+        }
+        row.append(tag);
+        if (o.embedded) {
+          // No release leads with this language — it's a secondary track inside
+          // a multi-language file, which this browser can't isolate.
+          row.title = 'Only available as a secondary track inside a multi-language file — this browser can’t isolate it.';
+          tag.textContent = 'in-file';
+          tag.className = 'tag';
+        }
+        row.addEventListener('click', async () => {
+          if (o.current) return;
+          row.disabled = true;
+          await ctx.stremio.switchAudio(o.lang);
+          renderTracksPanel();
+        });
+        audioList.append(row);
+      }
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = 'This browser hides embedded tracks, so each option loads that language’s release — everyone keeps their place.';
+      audioList.append(p);
+      return;
+    }
+
+    if (at && at.length === 1) hint('Only one audio track in this video.');
+    else if (opts.length === 1) hint(`Only one audio language available (${opts[0].lang}).`);
+    else hint("This browser doesn't expose embedded audio tracks (Safari does; Chrome hides them).");
   }
 
   async function loadTorrentSub(f, btn) {

@@ -159,7 +159,7 @@ button{background:none;border:0;cursor:pointer}
 /* ---------- Body ---------- */
 .body{display:flex;min-height:0;overflow:hidden}
 .stage{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
-.view{display:none;flex:1;min-height:0;flex-direction:column}
+.view{display:none;flex:1;min-height:0;flex-direction:column;position:relative;z-index:2}
 .view.active{display:flex}
 
 /* ---------- Cards (share / sync / setup) ---------- */
@@ -428,6 +428,8 @@ h1{font-family:var(--display);font-weight:600;font-size:34px;line-height:1.05;le
   font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;
 }
 .tag.cached{color:var(--ok);border-color:rgba(157,180,119,.35)}
+.s-meta .langs{color:var(--text);max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#audio-list .sub .tag,#audio-list .sub .warn{margin-left:auto;flex:none}
 .play{
   flex:none;width:28px;height:28px;display:grid;place-items:center;border-radius:var(--r-ctl);
   color:var(--dim);border:1px solid var(--hair);
@@ -547,7 +549,7 @@ h1{font-family:var(--display);font-weight:600;font-size:34px;line-height:1.05;le
 #stage-main:not(.theater) #cam-grid{
   position:absolute;inset:0;right:auto;top:auto;
   display:grid;gap:8px;padding:8px;align-content:center;justify-content:center;
-  grid-template-columns:minmax(0,560px);z-index:4;
+  grid-template-columns:minmax(0,560px);z-index:1; /* behind the view's card */
 }
 #stage-main:not(.theater) #cam-grid[data-count="2"]{grid-template-columns:repeat(2,minmax(0,480px))}
 #stage-main:not(.theater) #cam-grid[data-count="3"],
@@ -787,12 +789,11 @@ input[type=range]::-moz-range-thumb{width:9px;height:13px;background:var(--gold)
 /* ============================================================
    Immersive (chrome hides while watching)
    ============================================================ */
-.topbar,.controlbar,#cam-grid,#cam-chips,#chips-toggle{transition:opacity .2s var(--ease)}
+/* Cameras are the point of watching together — they stay put. Only the bars
+   fade on idle. */
+.topbar,.controlbar{transition:opacity .2s var(--ease)}
 #room.chrome-hidden .topbar,
-#room.chrome-hidden .controlbar,
-#room.chrome-hidden #cam-grid,
-#room.chrome-hidden #cam-chips,
-#room.chrome-hidden #chips-toggle{opacity:0;pointer-events:none}
+#room.chrome-hidden .controlbar{opacity:0;pointer-events:none}
 #chat-peek{
   position:absolute;left:14px;bottom:14px;z-index:18;max-width:72%;
   background:rgba(20,17,9,.9);border:1px solid var(--hair);padding:6px 10px;

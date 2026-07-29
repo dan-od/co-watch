@@ -574,6 +574,85 @@ export function createStremio(ctx) {
 
   // ---- stream picker (drawer) ----
   let pickerMeta = null;
+  // What's on screen right now, so the CC panel can offer other audio options.
+  let playing = null; // { streams, meta, streamKey }
+
+  // Stream `name` is NOT unique (dozens share "⚡ 4K BluRay"), so identify a
+  // release by its actual source.
+  const streamKey = (s) =>
+    s?.url || s?.infoHash || `${s?.name || ''}|${(s?.description || s?.title || '').slice(0, 80)}`;
+
+  // Chrome/Firefox don't expose a media element's embedded audioTracks, so for
+  // debrid files "switch audio track" really means "play the release that
+  // carries that language". These are the alternatives for the CURRENT title,
+  // one entry per language, resuming at the same timestamp.
+  // A file's FIRST listed language is the track the browser will actually
+  // default to — we can't isolate the others without audioTracks. So each
+  // language prefers a release that LEADS with it; a release that merely
+  // contains it is a fallback (flagged, because picking it may not change
+  // what you hear).
+  function getAudioOptions() {
+    if (!playing?.streams?.length) return [];
+    const byLang = new Map();
+    for (const s of playing.streams) {
+      const f = streamFacts(s);
+      const langs = f.langs.length ? f.langs : ['Unknown'];
+      langs.forEach((lang, i) => {
+        const cand = { lang, stream: s, warn: f.warn, audio: f.audio, q: f.q, leads: i === 0 };
+        const prev = byLang.get(lang);
+        if (!prev) return void byLang.set(lang, cand);
+        // leading beats embedded; then playable audio beats silent
+        const better = (cand.leads && !prev.leads) || (cand.leads === prev.leads && prev.warn && !cand.warn);
+        if (better) byLang.set(lang, cand);
+      });
+    }
+    const live = playing.streams.find((s) => streamKey(s) === playing.streamKey);
+    const playingFirst = live ? streamLangs(live)[0] || '' : '';
+    return [...byLang.values()].map((o) => ({
+      ...o,
+      current: streamKey(o.stream) === playing.streamKey && o.lang === playingFirst,
+      embedded: !o.leads, // only present inside a multi-language file
+    }));
+  }
+
+  // Swap the playing stream, keeping everyone's position.
+  async function switchAudio(lang) {
+    const opt = getAudioOptions().find((o) => o.lang === lang);
+    if (!opt || !playing) return false;
+    let at = 0;
+    try {
+      at = (await ctx.syncCore.getPlayer()?.getTime()) || 0;
+    } catch {}
+    notice(`Switching audio to ${lang}…`);
+    try {
+      const { url, torrentMeta } = await resolveStream(opt.stream, () => {});
+      if (!url) throw new Error('no playable source');
+      const source = {
+        kind: 'stremio',
+        type: playing.meta.type,
+        streamId: playing.meta.id,
+        name: opt.stream.name || opt.stream.title || '',
+        title: pickerMeta?.title || playing.meta.title || '',
+        resolvedUrl: url,
+      };
+      const shareAddon = addonToShare();
+      if (shareAddon) source.addonUrl = shareAddon;
+      await ctx.syncCore.loadSource(source);
+      playing = { ...playing, streamKey: streamKey(opt.stream) };
+      const p = ctx.syncCore.getPlayer();
+      if (p && at > 1) {
+        p.seek(at); // land where we left off (and tell the room)
+        ctx.signaling.signal({ type: 'sync', action: 'seek', time: at, rate: 1 });
+      }
+      applySubs(opt.stream, playing.meta, torrentMeta);
+      ctx.signaling.signal({ type: 'sync-load', source });
+      notice(`Audio: ${lang}`, 'ok', 3000);
+      return true;
+    } catch (err) {
+      notice(`Could not switch audio: ${err.message || err}`, 'error', 5000);
+      return false;
+    }
+  }
 
   async function openPicker(type, id, title, opts = {}) {
     pickerMeta = { type, id, title: opts.episodeTitle ? `${title} · ${opts.episodeTitle}` : title, art: opts.art };
@@ -593,6 +672,7 @@ export function createStremio(ctx) {
         .sort((a, b) => a.r - b.r || a.i - b.i)
         .map((x) => x.s);
       renderPicker(ranked);
+      pickerMeta.streams = ranked; // kept so the CC panel can offer other languages
       $('picker-sub').textContent = `${ranked.length} stream${ranked.length === 1 ? '' : 's'} · sorted by browser compatibility`;
       castBrowse({
         view: 'streams',
@@ -702,6 +782,13 @@ export function createStremio(ctx) {
       }
       rowLine.append(a);
     }
+    if (f.langs.length) {
+      const l = document.createElement('span');
+      l.className = 'langs';
+      l.textContent = `🌐 ${f.langs.slice(0, 3).join(', ')}${f.langs.length > 3 ? ` +${f.langs.length - 3}` : ''}`;
+      l.title = f.langs.join(', ');
+      rowLine.append(l);
+    }
     add(f.peers ? `${f.peers} peers` : '');
     if (f.cached) add('cached', 'tag cached');
     meta.append(src, rowLine);
@@ -717,6 +804,24 @@ export function createStremio(ctx) {
 
   // ---- stream metadata ----
   const streamText = (s) => `${s.name || ''} ${s.description || s.title || ''}`;
+
+  // Audio languages. Add-ons list them after a 🌐 marker, bullet-separated and
+  // terminated by the next emoji field (e.g. "🌐 English • Ukrainian • 🛰️ Comet").
+  const LANG_WORD = /^[A-Z][a-zA-Z-]{2,}(?:\s\([^)]+\))?$/;
+  function streamLangs(stream) {
+    const raw = `${stream.description || stream.title || ''}`;
+    const seg = raw.match(/🌐([^\n|]*)/);
+    const out = [];
+    if (seg) {
+      for (const part of seg[1].split(/[•·,]/)) {
+        const t = part.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').trim();
+        if (t && LANG_WORD.test(t) && !out.includes(t)) out.push(t);
+      }
+    }
+    if (!out.length && /\bmulti\b/i.test(raw)) out.push('Multi');
+    return out;
+  }
+
   function streamFacts(stream) {
     const text = streamText(stream);
     const res = text.match(/\b(2160p|4k|1080p|720p|480p)\b/i);
@@ -734,6 +839,7 @@ export function createStremio(ctx) {
       q: res ? (/4k/i.test(res[1]) ? '4K' : res[1].toLowerCase()) : '',
       size: size ? `${size[1]} ${size[2].toUpperCase()}` : '',
       audio,
+      langs: streamLangs(stream),
       peers: peers ? peers[1] : '',
       cached: !!stream.url, // debrid-resolved direct links start instantly
       warn: audioRank(stream) === 2,
@@ -814,6 +920,11 @@ export function createStremio(ctx) {
       const shareAddon = addonToShare();
       if (shareAddon) source.addonUrl = shareAddon;
       rememberMeta(source);
+      playing = {
+        streams: pickerMeta.streams || [],
+        meta: { type: pickerMeta.type, id: pickerMeta.id, title: pickerMeta.title },
+        streamKey: streamKey(stream),
+      };
       closePicker();
       await ctx.syncCore.loadSource(source); // switches to the watch view
       applySubs(stream, { type: pickerMeta.type, id: pickerMeta.id }, torrentMeta);
@@ -876,9 +987,10 @@ export function createStremio(ctx) {
       let url = null;
       let torrentMeta = null;
       let chosen = null;
+      let streams = [];
       try {
         const data = await fetchStreams(source.type, source.streamId);
-        const streams = data.streams || [];
+        streams = data.streams || [];
         chosen =
           streams.find((s) => s.name === source.name && (s.url || s.infoHash)) ||
           streams.find((s) => s.url || s.infoHash) ||
@@ -893,6 +1005,12 @@ export function createStremio(ctx) {
         return false;
       }
       await ctx.syncCore.loadSource({ ...source, resolvedUrl: url });
+      // Watchers get the same audio-language choices as the host.
+      playing = {
+        streams,
+        meta: { type: source.type, id: source.streamId, title: source.title },
+        streamKey: chosen ? streamKey(chosen) : '',
+      };
       if (chosen) applySubs(chosen, { type: source.type, id: source.streamId }, torrentMeta);
       else ctx.tracks.setTorrentSubs(null);
       notice(fromName ? `Following ${fromName}’s stream` : 'Following stream', 'ok', 4000);
@@ -929,5 +1047,5 @@ export function createStremio(ctx) {
     }
   }
 
-  return { run, activate, followStream };
+  return { run, activate, followStream, getAudioOptions, switchAudio };
 }
