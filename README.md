@@ -35,7 +35,8 @@ credentials never go in source (PRD §15). Real environment variables override
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | HTTP/WebSocket port (default `8080`). |
-| `TURN_URLS` | Comma-separated TURN URLs from a hosted provider (Metered, Cloudflare, Twilio). Unset → STUN-only. |
+| `TURN_API_URL` | **Preferred.** Provider endpoint that mints fresh credentials (e.g. Metered's `https://<app>.metered.live/api/v1/turn/credentials?apiKey=…`). The API key stays server-side; only the short-lived username/credential reach the browser. Cached ~30 min, falls back to the static values below. |
+| `TURN_URLS` | Comma-separated TURN URLs from a hosted provider (Metered, Cloudflare, Twilio). Unset → STUN-only. **The URLs and the credentials must come from the same relay host** — valid keys aimed at a different host are refused with a `400`, which looks exactly like a bad key. |
 | `TURN_USERNAME` | TURN username. |
 | `TURN_CREDENTIAL` | TURN credential/password. |
 | `FORCE_RELAY` | Set to `1` to force all media through TURN (`iceTransportPolicy: 'relay'`). **Testing only.** |
@@ -190,6 +191,14 @@ to the console.
   lifetime — check here first when diagnosing disconnects.
 
 ## Testing that TURN works
+
+Quickest check: open **Settings (gear) → Test relay (TURN)**. It gathers
+relay-only ICE candidates with the exact config the server serves and reports
+whether the relay allocated, was refused (400/401), is out of quota (486), or
+was unreachable (701). Raw ICE errors land in the tooltip and the console.
+`__cowatch.testTurn()` runs the same check from the console.
+
+For a full end-to-end proof:
 
 1. In `.env`, uncomment `FORCE_RELAY=1`.
 2. Restart the server (`npm start`). Startup logs confirm:

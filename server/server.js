@@ -24,7 +24,7 @@ try {
   // no .env — fine, run STUN-only
 }
 
-const { iceConfig, handleIceConfig } = require('./routes/ice-config');
+const { handleIceConfig, turnConfigured } = require('./routes/ice-config');
 const { handleTmdbSearch } = require('./routes/tmdb');
 const { handleTorrentSearch } = require('./routes/search');
 const { handleStremio } = require('./routes/stremio');
@@ -238,13 +238,14 @@ wss.on('connection', (ws, req) => {
 });
 
 server.listen(PORT, () => {
-  const { iceServers, forceRelay } = iceConfig();
-  const turnConfigured = iceServers.length > 1;
+  const relayed = turnConfigured();
+  const forceRelay = /^(1|true|yes)$/i.test(process.env.FORCE_RELAY || '');
+  const via = (process.env.TURN_API_URL || '').trim() ? 'auto-refreshed from the provider API' : 'static credentials';
   console.log(`CoWatch listening on http://localhost:${PORT}`);
-  console.log(`TURN: ${turnConfigured ? 'configured' : 'not configured (STUN-only)'}`);
+  console.log(`TURN: ${relayed ? `configured (${via})` : 'not configured (STUN-only)'}`);
   if (forceRelay) {
     console.log(
-      turnConfigured
+      relayed
         ? 'FORCE_RELAY is ON — all media will go through TURN (testing mode).'
         : 'WARNING: FORCE_RELAY is ON but no TURN is configured — connections WILL fail.'
     );
