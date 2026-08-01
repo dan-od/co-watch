@@ -14,6 +14,7 @@
 
 import { $, spinner } from '../lib/dom.js';
 import { getKey, resolveMagnet, infoHashToMagnet } from '../lib/torbox.js';
+import { confirmDialog } from '../lib/confirm.js';
 
 const ADDON_KEY = 'stremio_addon_url';
 const SHARE_ACK_KEY = 'stremio_share_ack';
@@ -711,7 +712,7 @@ export function createStremio(ctx) {
         title: pickerMeta?.title || playing.meta.title || '',
         resolvedUrl: url,
       };
-      const shareAddon = addonToShare();
+      const shareAddon = await addonToShare();
       if (shareAddon) source.addonUrl = shareAddon;
       await ctx.syncCore.loadSource(source);
       playing = { ...playing, streamKey: streamKey(opt.stream) };
@@ -1066,11 +1067,11 @@ export function createStremio(ctx) {
   }
 
   // ---- playback ----
-  function addonToShare() {
+  async function addonToShare() {
     const own = getAddonUrl();
     if (!own) return '';
     if (localStorage.getItem(SHARE_ACK_KEY)) return own;
-    const ok = typeof window.confirm === 'function' && window.confirm(SHARE_WARNING);
+    const ok = await confirmDialog(SHARE_WARNING, { okLabel: 'Share it' });
     if (ok) {
       localStorage.setItem(SHARE_ACK_KEY, '1');
       return own;
@@ -1156,7 +1157,7 @@ export function createStremio(ctx) {
           return;
         }
       }
-      const shareAddon = addonToShare();
+      const shareAddon = await addonToShare();
       if (shareAddon) source.addonUrl = shareAddon;
       rememberMeta(source);
       playing = {

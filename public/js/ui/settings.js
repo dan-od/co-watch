@@ -48,6 +48,46 @@ export function createSettings(ctx) {
     }
   });
 
+  // ---- Room server (app only) ----
+  // The one thing a local-only app cannot decide for itself: where the shared
+  // room lives. This used to be a Room-menu item that called window.prompt()
+  // from the main process — Electron's renderer does not reliably support
+  // that call, and it hung the page the same way the display-name prompt did.
+  // A field in this already-working panel avoids native dialogs entirely.
+  if (window.__cowatchDesktop) {
+    $('room-server-field').hidden = false;
+    window.__cowatchDesktop
+      .getSettings()
+      .then((s) => {
+        $('room-server').value = s?.signaling || '';
+      })
+      .catch(() => {});
+
+    const saveSignaling = async () => {
+      const value = $('room-server').value.trim();
+      const status = $('room-server-status');
+      status.textContent = 'Saving…';
+      status.className = 'key-status';
+      try {
+        await window.__cowatchDesktop.setSignaling(value);
+        // The shell reloads the page to reconnect on the new address — this
+        // message is the last thing that will be visible before that happens.
+        status.textContent = value ? 'Saved — reconnecting…' : 'Cleared — rooms will stay on this machine.';
+        status.className = 'key-status valid';
+      } catch (err) {
+        status.textContent = `Could not save: ${err.message || err}`;
+        status.className = 'key-status invalid';
+      }
+    };
+    $('room-server-save').addEventListener('click', saveSignaling);
+    $('room-server').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        saveSignaling();
+      }
+    });
+  }
+
   // ---- TorBox key ----
   $('torbox-key').value = getKey();
   updateKeyStatus(getKey() ? 'unknown' : 'empty');

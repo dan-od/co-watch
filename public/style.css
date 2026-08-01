@@ -92,6 +92,13 @@ button{background:none;border:0;cursor:pointer}
 #landing .wordmark{font-size:30px;letter-spacing:.16em}
 #landing p{color:var(--dim);max-width:42ch;font-size:13.5px;line-height:1.7}
 #landing .btn{height:40px;padding:0 22px;font-size:14px}
+#landing .name-input{
+  height:38px;width:220px;padding:0 12px;font:inherit;font-size:13.5px;text-align:center;
+  color:var(--text);background:var(--panel-2);
+  border:1px solid var(--hair);border-radius:var(--r-ctl);
+}
+#landing .name-input::placeholder{color:var(--dim)}
+#landing .name-input:focus{outline:none;border-color:rgba(228,166,63,.45)}
 #landing .join{display:flex;gap:8px;align-items:center;margin-top:2px}
 #landing .join input{
   height:36px;width:230px;padding:0 11px;font:inherit;font-size:13px;
@@ -398,6 +405,19 @@ h1{font-family:var(--display);font-weight:600;font-size:34px;line-height:1.05;le
 }
 .streams-btn:hover{background:var(--gold-soft)}
 .streams-btn:disabled{color:var(--dim);border-color:var(--hair);cursor:default}
+
+/* ---------- Confirm dialog (replaces window.confirm) ---------- */
+.confirm-scrim{
+  position:fixed;inset:0;background:rgba(10,8,4,.6);z-index:60;
+  display:flex;align-items:center;justify-content:center;padding:24px;
+}
+.confirm-box{
+  width:100%;max-width:380px;background:var(--panel);
+  border:1px solid var(--hair-strong);border-radius:var(--r-frame);
+  padding:20px;box-shadow:0 24px 60px rgba(0,0,0,.5);
+}
+.confirm-msg{color:var(--text);font-size:13.5px;line-height:1.6;margin:0 0 16px}
+.confirm-row{display:flex;justify-content:flex-end;gap:8px}
 
 /* ---------- Stream picker ---------- */
 .scrim{

@@ -56,13 +56,31 @@ if (roomMatch) {
 
 function showLanding() {
   $('landing').hidden = false;
+  const nameInput = $('display-name');
+  nameInput.value = (localStorage.getItem('display_name') || '').trim();
+
+  // Saved before navigating, so enterRoom() on the next page never needs to
+  // ask for anything itself — the one place that used to ask was
+  // window.prompt(), which blocked the whole renderer with no error shown.
+  const saveName = () => {
+    const name = nameInput.value.trim().slice(0, 24);
+    if (!name) {
+      nameInput.focus();
+      return null;
+    }
+    localStorage.setItem('display_name', name);
+    return name;
+  };
+
   $('create-room').addEventListener('click', () => {
+    if (!saveName()) return;
     location.href = `/r/${randomRoomId()}`;
   });
 
   // Accept either a bare code or a whole pasted link — people will paste
   // whatever they were sent, and the tail of any room URL is the code.
   const join = () => {
+    if (!saveName()) return;
     const raw = $('join-code').value.trim();
     const code = (raw.match(/\/r\/([\w-]{4,64})/) || [, raw])[1] || '';
     if (!/^[\w-]{4,64}$/.test(code)) {
@@ -75,6 +93,9 @@ function showLanding() {
   $('join-room').addEventListener('click', join);
   $('join-code').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') join();
+  });
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('create-room').click();
   });
 
   // CoWatch is only ever used through the app now — every visitor here is a
@@ -90,18 +111,14 @@ function randomRoomId() {
   return Array.from(bytes, (b) => b.toString(36).padStart(2, '0')).join('').slice(0, 10);
 }
 
-// Display name: asked once, kept in localStorage, shown under camera tiles
-// and in "<name> is sharing" / chat labels.
+// Display name: set on the landing page (a real input — see showLanding),
+// kept in localStorage, shown under camera tiles and in "<name> is sharing" /
+// chat labels. The landing page is the only supported way into a room now, so
+// this should already be set; the Guest fallback only covers something like a
+// direct navigation to a room URL that skipped it.
 function getDisplayName() {
-  let name = (localStorage.getItem('display_name') || '').trim();
-  if (!name) {
-    if (typeof window.prompt === 'function') {
-      name = (window.prompt('Enter your name for this room:') || '').trim().slice(0, 24);
-    }
-    if (!name) name = `Guest-${Math.random().toString(36).slice(2, 6)}`;
-    localStorage.setItem('display_name', name);
-  }
-  return name;
+  const name = (localStorage.getItem('display_name') || '').trim();
+  return name || `Guest-${Math.random().toString(36).slice(2, 6)}`;
 }
 
 function enterRoom(roomId) {

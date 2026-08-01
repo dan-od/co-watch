@@ -16,6 +16,11 @@
   <section id="landing" hidden>
     <span class="wordmark">Co<b>Watch</b></span>
     <p id="landing-blurb">Watch something together. Create a room and send the link to up to five friends.</p>
+    <!-- A real input, not window.prompt(): Electron's renderer does not
+         reliably implement prompt() — it can block the whole page before
+         anything (signaling included) ever runs, with no error to show for
+         it. This is asked here, once, before a room ever opens. -->
+    <input id="display-name" class="name-input" placeholder="Your name" maxlength="24" autocomplete="off" spellcheck="false" aria-label="Your name">
     <button id="create-room" class="btn">Create room</button>
     <!-- Joining needs its own way in. In the desktop app a room link points at
          127.0.0.1 on a port that differs per machine, so a code is the only
@@ -97,6 +102,18 @@
             </div>
             <p id="turn-test-status" class="key-status"></p>
             <p class="hint">Cameras and screen share need a working relay when people are on different networks. Chat and Sync playback do not — they ride the room's own connection.</p>
+          </div>
+          <!-- App-only: each copy of CoWatch runs its own local server, so
+               rooms need one shared address everyone points at. Hidden
+               entirely outside the app, where there is nothing for it to do. -->
+          <div class="field" id="room-server-field" hidden>
+            <span class="label" id="room-server-label">Room server</span>
+            <div class="input-row">
+              <input id="room-server" placeholder="https://your-tunnel.example.com" autocomplete="off" spellcheck="false" aria-labelledby="room-server-label">
+              <button id="room-server-save" class="btn ghost">Save</button>
+            </div>
+            <p id="room-server-status" class="key-status"></p>
+            <p class="hint">Everyone watching together must use the same address here — it carries chat, play/pause and the video call. Video itself never goes through it; each copy of CoWatch fetches and repairs that locally. Leave empty to keep rooms on this machine only.</p>
           </div>
         </div>
       </div>

@@ -111,11 +111,11 @@ function buildMenu() {
     {
       label: 'Room',
       submenu: [
-        {
-          label: 'Set room server…',
-          click: askForSignaling,
-        },
-        { type: 'separator' },
+        // Where the room lives is set from the in-page Settings panel (gear
+        // icon), not here. It used to be a menu item that called
+        // window.prompt() from the renderer — Electron does not reliably
+        // support that call, and it hung the whole page the same way the
+        // display-name prompt did, with no error to show for it.
         { role: 'reload' },
         { role: 'toggleDevTools' },
         isMac ? { role: 'close' } : { role: 'quit' },
@@ -129,30 +129,6 @@ function buildMenu() {
     { role: 'windowMenu' },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-}
-
-// The one thing a local-only app cannot do for itself: agree with friends on
-// where the room is.
-async function askForSignaling() {
-  const current = readSettings().signaling || '';
-  const { response } = await dialog.showMessageBox(win, {
-    type: 'question',
-    buttons: ['Cancel', 'Use this window to enter it'],
-    defaultId: 1,
-    title: 'Room server',
-    message: 'Where should rooms be hosted?',
-    detail:
-      `Everyone watching together needs the same room server — that is what carries chat, ` +
-      `play/pause and the video-call connection. Video files are never sent through it; ` +
-      `each copy of CoWatch fetches and repairs those locally.\n\n` +
-      `Current: ${current || '(this machine only)'}`,
-  });
-  if (response !== 1) return;
-  // Prompting inside the page keeps this to one text field instead of shipping
-  // a settings window for a single value.
-  win.webContents.executeJavaScript(
-    `window.__cowatchDesktop && window.__cowatchDesktop.promptSignaling(${JSON.stringify(current)})`
-  );
 }
 
 ipcMain.handle('cowatch:copy', (_e, text) => {

@@ -1,6 +1,12 @@
 // Bridge between the shell and the page. Deliberately tiny: the page is
-// ordinary web content with no Node access, so this exposes exactly two things
-// — the room-server address, and a way to change it.
+// ordinary web content with no Node access, so this exposes exactly the room-
+// server address (read/write) and a clipboard write.
+//
+// Nothing here calls window.prompt() or window.alert(). Electron's renderer
+// does not reliably implement either — one hung the whole page silently
+// before this was found (see public/app.js and public/js/ui/settings.js for
+// what replaced them: a real input on the landing page, and a field in the
+// existing Settings panel).
 
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -13,16 +19,4 @@ contextBridge.exposeInMainWorld('__cowatchDesktop', {
   // isn't — measured. Copy is how the room code reaches a friend, so it goes
   // through Electron's clipboard, which always works.
   copy: (text) => ipcRenderer.invoke('cowatch:copy', String(text ?? '')),
-  // Called from the Room menu. A prompt is enough for one address, and keeps
-  // the shell from needing a settings window of its own.
-  promptSignaling: async (current) => {
-    const next = window.prompt(
-      'Room server address — everyone watching together must use the same one.\n' +
-        'Example: https://your-tunnel.trycloudflare.com\n\n' +
-        'Leave empty to keep rooms on this machine only.',
-      current || ''
-    );
-    if (next === null) return; // cancelled
-    await ipcRenderer.invoke('cowatch:set-signaling', next);
-  },
 });
