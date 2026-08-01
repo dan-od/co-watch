@@ -36,7 +36,14 @@
         "dmg",
         "zip"
       ],
-      "category": "public.app-category.entertainment"
+      "category": "public.app-category.entertainment",
+      "hardenedRuntime": true,
+      "entitlements": "desktop/mac/entitlements.mac.plist",
+      "entitlementsInherit": "desktop/mac/entitlements.mac.inherit.plist",
+      "extendInfo": {
+        "NSCameraUsageDescription": "CoWatch needs your camera so the people you are watching with can see you.",
+        "NSMicrophoneUsageDescription": "CoWatch needs your microphone so the people you are watching with can hear you."
+      }
     },
     "win": {
       "target": [

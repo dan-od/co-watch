@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the packaged macOS build.
+
+  Without these, a SIGNED build does not just get a permission denial the way
+  unpackaged `electron .` does — Chromium's V8 needs the JIT/executable-memory
+  entries just to start under hardened runtime, and getUserMedia needs the
+  camera/microphone entries or the OS blocks the request before it can ever
+  become a user-facing prompt. Camera/microphone entries alone were not
+  enough to reproduce the actual reported failure (that turned out to be a
+  stale TCC decision on the unpackaged "Electron" dev binary, not a code
+  issue) — these exist for when a signed build is actually distributed,
+  where the failure mode without them is worse: the app can fail to launch
+  at all, not just fail to get a camera.
+
+  NOT independently verified against a real signed build — this repo has
+  no macOS machine to build and codesign on. This follows Electron's
+  documented hardened-runtime baseline; treat it as a first pass, not a
+  proven one, until it has actually been through `npm run dist:mac` on a Mac.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.device.camera</key>
+  <true/>
+  <key>com.apple.security.device.microphone</key>
+  <true/>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>
